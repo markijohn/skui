@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "masonry_quick",
+    "masonry_quick_macro",
+    "masonry_quick_example"
+]

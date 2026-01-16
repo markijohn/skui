@@ -1,0 +1,10 @@
+[package]
+name = "masonry_quick_example"
+version = "0.1.0"
+authors = ["markijohn <kitae.john@gmail.com>"]
+edition = "2024"
+include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
+
+
+[dependencies]
+xilem = "0.4.0"
