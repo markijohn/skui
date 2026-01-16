@@ -22,14 +22,17 @@ fn parse_rgba(s: &str) -> Option<(u8, u8, u8, u8)> {
 }
 
 #[derive(Logos, Debug, Clone, PartialEq)]
-pub enum CssValueToken {
+pub enum CssValue {
     #[token("auto", |_| CssKeyword::Auto)]
     #[token("none", |_| CssKeyword::None)]
     #[token("inherit", |_| CssKeyword::Inherit)]
     Keyword(CssKeyword),
 
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_-]*", |lex| lex.slice().to_string())]
-    Ident(String),
+    #[regex(r"[0-9]+(\.[0-9]+)?px", |lex| {
+        let s = lex.slice();
+        s[..s.len()-2].parse::<f64>().ok()
+    })]
+    Px(f64),
 
     #[regex(r"[0-9]+(\.[0-9]+)?", |lex| lex.slice().parse().ok() )]
     Number(f64),
@@ -40,17 +43,14 @@ pub enum CssValueToken {
     })]
     Percent(f64),
 
+    #[regex(r"[a-zA-Z_][a-zA-Z0-9_-]*", |lex| lex.slice().to_string())]
+    Ident(String),
+
     #[regex(r#""([^"\\]|\\.)*""#, |lex| {
         let s = lex.slice();
         Some(s[1..s.len()-1].to_string())
     })]
     Str(String),
-
-    #[regex(r"[0-9]+(\.[0-9]+)?px", |lex| {
-        let s = lex.slice();
-        s[..s.len()-2].parse::<f64>().ok()
-    })]
-    Px(f64),
 
     #[regex(r"#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})", |lex| {
         Some(lex.slice().to_string())
@@ -68,25 +68,6 @@ pub enum CssValueToken {
         |lex| parse_rgb(lex.slice())
     )]
     Rgb( (u8,u8,u8) ),
-
-    List(Vec<CssValueToken>),
-
-    #[token(",")]
-    Comma,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum CssValue {
-    Keyword(CssKeyword),
-    Ident(String),
-    Number(f64),
-    Percent(f64),
-    Str(String),
-    Px(f64),
-    HexColor(String),
-    Rgba(u8, u8, u8, u8),
-    Rgb(u8, u8, u8),
-    List(Vec<CssValue>),
 }
 
 // ==================== Token Definition ====================
@@ -106,7 +87,7 @@ pub enum Token {
         let s = lex.slice();
         s[1..s.len()-1].to_string()
     })]
-    Text(String),
+    Str(String),
 
     #[regex(r"-?\d+\.\d+", |lex| lex.slice().parse().ok())]
     Float(f64),
@@ -165,7 +146,7 @@ pub enum Selector {
 #[derive(Debug, Clone)]
 pub struct Style {
     pub selectors: Vec<Selector>,
-    pub properties: Vec<(String, CssValue)>,
+    pub properties: Vec<(String, Vec<CssValue>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -225,31 +206,6 @@ pub enum Parameters {
 }
 
 
-fn parse_css_value_simple(s: &str) -> CssValue {
-    let trimmed = s.trim();
-
-    // CssValueToken으로 렉싱 시도
-    let tokens: Vec<CssValueToken> = CssValueToken::lexer(trimmed)
-        .filter_map(|t| t.ok())
-        .collect();
-
-    if tokens.len() == 1 {
-        match &tokens[0] {
-            CssValueToken::Keyword(k) => return CssValue::Keyword(k.clone()),
-            CssValueToken::Number(n) => return CssValue::Number(*n),
-            CssValueToken::Percent(p) => return CssValue::Percent(*p),
-            CssValueToken::Px(p) => return CssValue::Px(*p),
-            CssValueToken::HexColor(c) => return CssValue::HexColor(c.clone()),
-            CssValueToken::Rgba( (r, g, b, a) ) => return CssValue::Rgba(*r, *g, *b, *a),
-            CssValueToken::Rgb( (r, g, b) ) => return CssValue::Rgb(*r, *g, *b),
-            CssValueToken::Ident(s) => return CssValue::Ident(s.clone()),
-            _ => {}
-        }
-    }
-
-    // 기본값: Ident로 처리
-    CssValue::Ident(trimmed.to_string())
-}
 
 // Component 내부 아이템 (Property 또는 Component)
 #[derive(Debug, Clone)]
@@ -259,7 +215,23 @@ enum ComponentItem {
     Child(Component),
 }
 
-// ==================== Parser ====================
+// CSS Value 파싱 함수
+fn parse_css_values(input: &str) -> Vec<CssValue> {
+    CssValue::lexer(input)
+        .filter_map(|t| t.ok())
+        .collect()
+}
+
+// 기본적으로 생성함수는 성공/실패를 가지며, 개념적으로 Option-like 하다
+// select! 는 파서가 성공할때의 리턴값 정의 함수 생성을 의미
+// separated_by 는 repeat 를 내포한다.
+// then 이 map 과 다른점은 then 은 처리가 성공이 되어야 다음 체인으로 처리될 수 있음을 내포
+// then_ignore ex:) a.then_ignore(b) a가 성공한 뒤, b가 성공하는지를 검사하고 그 입력은 소비하되 결과는 버리며, 최종적으로 a의 결과만 다음 체인으로 전달한다
+// recurrsive 는 현재 생성함수를 내부에서 다시 호출할 수 있도록 하기 위함
+// allow_trailing 은 separated_by 를 마지막에 한번 더 허용할 수 있다는 의미 ex:) 1,2,3,
+// delimited_by 는 최초 그리고 루프 매번에 점검하는것이 아님. 소진이 완료되고 나서야 점검되는것임. separated_by와 같은 경우 종료가 명확하지만 repeat 의 경우는 종료 시점이 모호하므로 어디까지인지 알려야(then_ignore 와 같은) 함
+// or 는 실패 시 입력 커서를 되돌리고 다음 파서를 시도하는것
+// or_not 은 성공하던 실패하던 Option 으로 래핑해준다. 성공이면 Some
 pub fn parser<'a>() -> impl Parser<'a, &'a [Token], Vec<AstNode>, extra::Err<Rich<'a, Token>>> {
     let value = recursive(|value| {
         let bool_val = select! {
@@ -273,7 +245,7 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], Vec<AstNode>, extra::Err<Ric
         };
 
         let string = select! {
-            Token::Text(s) => Value::String(s),
+            Token::Str(s) => Value::String(s),
         };
 
         let ident = select! {
@@ -288,7 +260,18 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], Vec<AstNode>, extra::Err<Ric
             .delimited_by(just(Token::LBracket), just(Token::RBracket))
             .map(Value::Array);
 
-        choice((bool_val, number, string, array, ident))
+        let map = select! { Token::Ident(s) => s }
+            .then_ignore(just(Token::Colon))
+            .then(value.clone())
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace))
+            .map(|pairs: Vec<(String, Value)>| {
+                Value::Map(pairs.into_iter().collect())
+            });
+
+        choice((bool_val, number, string, ident, array, map))
     });
 
     let parameters = {
@@ -320,6 +303,29 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], Vec<AstNode>, extra::Err<Ric
         select! { Token::Class(s) => Selector::Class(s) },
     ));
 
+    // Style: selector { prop:value value value; }
+    // CSS value는 세미콜론/컴마까지의 모든 토큰을 수집
+    let style_value = none_of([Token::Colon, Token::Semicolon, Token::Comma, Token::LBrace, Token::RBrace])
+        .repeated()
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .map(|tokens: Vec<Token>| {
+            // 토큰을 문자열로 변환
+            let value_str = tokens.iter()
+                .filter_map(|t| match t {
+                    Token::Ident(s) => Some(s.clone()),
+                    Token::True => Some("true".to_string()),
+                    Token::False => Some("false".to_string()),
+                    Token::Integer(i) => Some(i.to_string()),
+                    Token::Float(f) => Some(f.to_string()),
+                    Token::Str(s) => Some(format!("\"{}\"", s)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            parse_css_values(&value_str)
+        });
+
     let style = selector
         .repeated()
         .at_least(1)
@@ -327,33 +333,15 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], Vec<AstNode>, extra::Err<Ric
         .then(
             select! { Token::Ident(s) => s }
                 .then_ignore(just(Token::Colon))
-                .then(select! { Token::Ident(s) => s })
+                .then(style_value)
                 .separated_by(choice((just(Token::Comma), just(Token::Semicolon))))
                 .allow_trailing()
                 .collect::<Vec<_>>()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace))
         )
-        .map(|(selectors, props)| {
-            let properties = props.into_iter()
-                .map(|(k, v)| (k, parse_css_value_simple(&v)))
-                .collect();
+        .map(|(selectors, properties)| {
             AstNode::Style(Style { selectors, properties })
         });
-
-    // let style = selector
-    //     .repeated()
-    //     .at_least(1)
-    //     .collect::<Vec<_>>()
-    //     .then(
-    //         style_property
-    //             .separated_by(choice((just(Token::Comma), just(Token::Semicolon))))
-    //             .allow_trailing()
-    //             .collect::<Vec<_>>()
-    //             .delimited_by(just(Token::LBrace), just(Token::RBrace))
-    //     )
-    //     .map(|(selectors, properties)| {
-    //         AstNode::Style(Style { selectors, properties })
-    //     });
 
     let component = recursive(|component| {
         let name = select! { Token::Ident(s) => s };
@@ -364,7 +352,7 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], Vec<AstNode>, extra::Err<Ric
         let classes = select! { Token::Class(s) => s }.repeated().collect::<Vec<_>>();
 
         // 3가지 아이템 타입
-        let text_item = select! { Token::Text(s) => ComponentItem::Text(s) };
+        let text_item = select! { Token::Str(s) => ComponentItem::Text(s) };
         let property_item = select! { Token::Ident(s) => s }
             .then_ignore(just(Token::Colon))
             .then(value.clone())
@@ -383,6 +371,9 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], Vec<AstNode>, extra::Err<Ric
             .then(classes)
             .then(items)
             .map(|((((name, params), id), classes), items)| {
+                (name, params, id, classes, items)
+            })
+            .map(|(name, params, id, classes, items)| {
                 let mut text = None;
                 let mut properties = HashMap::new();
                 let mut children = vec![];
@@ -408,10 +399,6 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], Vec<AstNode>, extra::Err<Ric
 
 // ==================== Main Parse Function ====================
 pub fn parse(tokens:&[Token]) -> Result<Vec<AstNode>, Vec<Rich<Token>>> {
-    // let tokens: Vec<Token> = Token::lexer(input)
-    //     .filter_map(|t| t.ok())
-    //     .collect();
-
     parser().parse(tokens).into_result()
 }
 
@@ -425,21 +412,22 @@ mod tests {
         let input = r#"
             #list { background:WHITE }
             .mytype { bold:true }
-            .content_item { background:WHITE }
+            .content_item { background:WHITE; border:1px solid BLACK }
 
-            Flex(Horizontal,Start,Start,MainAxisFill) #list .mytype {
+            Flex (Horizontal,Start,Start,MainAxisFill) #list .mytype {
                 Button { "OK" }
                 Button { "Cancel" }
                 Label { "Hello" }
                 FlexItem(1.0) { Label {"Hi"} }
                 width : 100
+                etc : {key:value, key2:value2}
             }
 
             Grid(4,4) #contentList {
             }
         "#;
 
-        let tokens = Token::lexer(input).collect::<Result<Vec<_>, _>>().unwrap();
+        let tokens = Token::lexer(input).collect::<Result<Vec<_>, _>>().expect("Failed to tokenize input");
 
         let result = parse( tokens.as_slice() );
 
