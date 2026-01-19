@@ -66,6 +66,7 @@ pub struct CursorMark(usize);
 
 #[derive(Debug)]
 pub struct TokenCursor<'a,T> {
+    base_idx: usize,
     idx: usize,
     tokens: &'a [T],
     default: T,
@@ -74,11 +75,15 @@ pub struct TokenCursor<'a,T> {
 
 impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
     pub fn new(tokens: &'a [T]) -> TokenCursor<'a,T> {
-        Self { idx:0, tokens, default: T::default() }
+        Self { base_idx:0, idx:0, tokens, default: T::default() }
+    }
+
+    pub fn idx(&self) -> usize {
+        self.base_idx + self.idx
     }
 
     pub fn fork(&self) -> TokenCursor<'a,T> {
-        Self { idx:self.idx, tokens:self.tokens, default:self.default }
+        Self { base_idx:self.base_idx, idx:self.idx, tokens:self.tokens, default:self.default }
     }
     
     pub fn is_eof(&self) -> bool {
@@ -227,24 +232,35 @@ impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
     }
 
     pub fn take_delimited(&mut self, (start,end):(T,T) ) -> Option<TokenCursor<'a,T>> {
-        if start != self.take_one() {
-            return None;
-        }
-        let block_start = self.idx;
-        let mut depth = 1;
-        while !self.is_eof() {
-            let next = self.take_one();
-            if start == next {
-                depth += 1;
-            } else if end == next {
-                depth -= 1;
-                if depth == 0 {
-                    let block = &self.tokens[block_start..self.idx];
-                    return Some(TokenCursor::new(block));
+        let org_idx = self.idx;
+        if start == self.take_one() {
+            let block_start = self.idx;
+            let mut depth = 1;
+            while !self.is_eof() {
+                let next = self.take_one();
+                if start == next {
+                    depth += 1;
+                } else if end == next {
+                    depth -= 1;
+                    if depth == 0 {
+                        let block = &self.tokens[block_start..self.idx-1];
+                        let mut cursor = TokenCursor::new(block);
+                        cursor.base_idx = self.base_idx + block_start;
+                        return Some( cursor );
+                    }
                 }
             }
         }
 
+        self.idx = org_idx;
         None
+    }
+
+    pub fn ok_with<RT,E>(self, t:RT) -> Result<(Self,RT),E> {
+        Ok( (self,t) )
+    }
+
+    pub fn peek_all(&self) -> &[T] {
+        self.tokens
     }
 }
