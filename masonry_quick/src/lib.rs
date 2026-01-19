@@ -7,8 +7,63 @@ use cursor::TokenCursor;
 
 use std::collections::HashMap;
 use chumsky::Parser;
+use logos::{Logos, Span};
+use crate::cursor::CursorMark;
 
 pub type Cursor<'a> = TokenCursor<'a,Token<'a>>;
+
+pub type Result<'a,T> = std::result::Result<T, ParseError>;
+
+pub struct ParseError {
+    idx: usize,
+    kind: ParseErrorKind,
+}
+
+impl ParseError {
+
+    pub fn expect_ident(cursor: &Cursor) -> Self {
+        Self { token_info:cursor.peek_one().to_info(), kind:ParseErrorKind::ExpectIdent }
+    }
+
+    pub fn expect_value(mark:Option<CursorMark>, cursor: &Cursor<'a>) -> Self {
+        Self { mark, cursor, kind:ParseErrorKind::ExpectValue }
+    }
+
+    pub fn invalid_css_value(mark:Option<CursorMark>, cursor: &Cursor<'a>) -> Self {
+        Self { mark, cursor, kind:ParseErrorKind::InvalidCssValue }
+    }
+
+    pub fn not_selector(mark:Option<CursorMark>, cursor: &Cursor<'a>) -> Self {
+        Self { mark, cursor, kind:ParseErrorKind::InvalidCssSelector }
+    }
+
+    pub fn expect_kv(mark:Option<CursorMark>, cursor: &Cursor<'a>) -> Self {
+        Self { mark, cursor, kind:ParseErrorKind::ExpectKeyValue }
+    }
+
+    pub fn not_parameter(mark:Option<CursorMark>, cursor: &Cursor<'a>) -> Self {
+        Self { mark, cursor, kind:ParseErrorKind::ExpectParameter }
+    }
+
+    pub fn expect_brace_block(mark:Option<CursorMark>, cursor: &Cursor<'a>) -> Self {
+        Self { mark, cursor, kind:ParseErrorKind::ExpectBraceBlock }
+    }
+
+    pub fn unknown_start(mark:Option<CursorMark>, cursor:&Cursor<'a>) -> Self {
+        Self { mark, cursor, kind:ParseErrorKind::ExpectParameter }
+    }
+}
+
+pub enum ParseErrorKind {
+    ExpectIdent,
+    ExpectValue,
+    InvalidCssValue,
+    InvalidCssSelector,
+    ExpectKeyValue,
+    ExpectParameter,
+    ExpectBraceBlock,
+    UnknownStart,
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum CssKeyword {
@@ -30,9 +85,9 @@ pub enum CssValue {
     Rgb( (u8,u8,u8) ),
 }
 
-impl <'a> TryFrom<Token<'a>> for CssValue {
-    type Error = ();
-    fn try_from(tok: Token) -> Result<Self, Self::Error> {
+impl <'a> TryFrom< (CursorMark, &'a Cursor, Token) > for CssValue {
+    type Error = ParseError<'a>;
+    fn try_from( (mark,cursor,tok):(CursorMark, &'a Cursor, Token) ) -> Result<Self> {
         match tok {
             Token::Ident("auto") => Ok(CssValue::Keyword(CssKeyword::Auto)),
             Token::Ident("none") => Ok(CssValue::Keyword(CssKeyword::None)),
@@ -46,7 +101,7 @@ impl <'a> TryFrom<Token<'a>> for CssValue {
             Token::Id(s) => Ok(CssValue::HexColor(s.to_string())),
             Token::Str(s) => Ok(CssValue::Str(s.to_string())),
             Token::Ident(s) => Ok(CssValue::Ident(s.to_string())),
-            _ => Err(()),
+            _ => Err( ParseError::invalid_css_value(Some(mark), cursor) ),
         }
     }
 }
@@ -66,14 +121,20 @@ pub struct StyleProperty {
 
 #[derive(Debug, Clone)]
 pub struct Style {
-    pub selector: Selector,
+    pub selector: Vec<Selector>,
     pub properties: Vec<StyleProperty>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Parameters {
+    Map(HashMap<String,Value>),
+    Args(Vec<Value>)
 }
 
 #[derive(Debug, Clone)]
 pub struct Component {
     pub name: String,
-    pub params: Vec<Value>,
+    pub params: Parameters,
     pub ids: Vec<String>,
     pub classes: Vec<String>,
     pub text: Option<String>,
@@ -82,9 +143,9 @@ pub struct Component {
 }
 
 #[derive(Debug, Clone)]
-pub enum AstNode {
-    Style(Style),
-    Component(Component),
+pub struct ParsedDocument {
+    pub styles: Vec<Style>,
+    pub components: Vec<Component>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,282 +166,150 @@ pub enum Value {
 }
 
 
-fn optional_parse_style_properties(mut cursor: Cursor) -> Vec<StyleProperty> {
+fn parse_style_properties(mut cursor: Cursor) -> Result<Vec<StyleProperty>> {
+    let mark = Some(cursor.mark());
     let mut style_props = Vec::new();
 
     while !cursor.is_eof() {
-        if let Some( key ) = cursor.take_if_map( | ts | {
-            if let [Token::Ident(key), Token::Colon] = ts {
-                Some( key )
-            } else {
-                None
+        take_if!(cursor,
+            [Token::Ident(key), Token::Colon] => {
+                let css_val = cursor.take_map_until( | t | CssValue::try_from(*t).ok() );
+                style_props.push( StyleProperty { key:key.to_string(), values:css_val } );
             }
-        }) {
-            let css_val = cursor.take_collect_if( | t | CssValue::try_from(*t).ok() );
-            style_props.push( StyleProperty { key:key.to_string(), values:css_val } );
-        }
+            _ => return Err(ParseError::expect_ident(mark, &cursor))
+        );
+
+        let _ = cursor.take_ignore( [Token::Semicolon] );
     }
-    style_props
+    Ok( style_props )
 }
 
-fn must_parse_style_item(cursor: &mut Cursor) -> Result<Style, String> {
-    let selector = match cursor.take::<1>()[0] {
-        Token::Id(s) => Selector::Id(s.to_string()),
-        Token::Class(s) => Selector::Class(s.to_string()),
-        Token::Ident(s) => Selector::Tag(s.to_string()),
-        _ => return Err("Expected selector".to_string()),
-    };
-    if let Some(block_cursor)  = cursor.take_delimited( Token::block_brace() ) {
-        let properties = optional_parse_style_properties(block_cursor);
-        Ok(Style { selector, properties })
-    } else {
-        Err("Expected block brace".to_string())
-    }
+fn parse_def_selector(cursor:&mut Cursor) -> Result<Selector> {
+    let mark = Some(cursor.mark());
+    take_if!(cursor,
+        [Token::Id(s)] => Selector::Id(s.to_string()),
+        [Token::Class(s)] => Selector::Class(s.to_string()),
+        [Token::Ident(s)] => Selector::Tag(s.to_string()),
+        _ => return Err(ParseError::not_selector(mark, cursor))
+    );
 }
 
-fn parse_style_block(cursor: &mut TokenCursor) -> Result<Style, String> {
+fn parse_def_selectors(cursor:&mut Cursor) -> Result<Vec<Selector>> {
+    let mut selectors = Vec::new();
+    while !cursor.is_eof() || cursor.peek_one() != Token::LBrace {
+        selectors.push( parse_def_selector(cursor)? );
+    }
+    Ok(selectors)
+}
+
+fn parse_style_item(cursor: &mut Cursor) -> Result<Style> {
+    let mark = Some(cursor.mark());
+    let selector = parse_def_selectors(cursor)?;
+    let block = cursor.take_delimited( Token::block_brace() ).map_err(|_| ParseError::expect_brace_block(mark,cursor))?;
+    let properties = parse_style_properties( block )?;
+    Ok(Style { selector, properties })
+}
+
+fn parse_style_block(cursor: &mut Cursor) -> Result<Vec<Style>> {
     let mut items = Vec::new();
-
-    while !cursor.is_eof() {
-        if cursor.is_eof() {
-            break;
+    if let Token::Ident("style") = cursor.take_one() {
+        let mark = Some(cursor.mark());
+        let mut block = cursor.take_delimited( Token::block_brace() ).map_err(|_| ParseError::expect_brace_block(mark,cursor))?;
+        while !block.is_eof() {
+            items.push(parse_style_item(&mut block)?);
         }
-
-        // Selector { ... }
-        items.push(parse_style_item(cursor)?);
     }
-
-    Ok(Style { items })
+    Ok(items)
 }
 
-// ==================== Value Parsing ====================
-fn parse_value(cursor: &mut Cursor) -> Option<Value> {
-    if let Some(block) = cursor.take_delimited( Token::block_brace() ) {
+fn parse_nested_map(block: &mut Cursor) -> Result<HashMap<String, Value>> {
+    let mut map = HashMap::new();
+    while !block.is_eof() {
+        let mark = Some(block.mark());
+        if let [Token::Ident(key), Token::Equal] = block.take() {
+            map.insert(key.to_string(), parse_value(block)?);
+        } else {
+            return Err(ParseError::expect_kv(mark,block));
+        }
+    }
+    Ok(map)
+}
 
+fn parse_nested_array(block: &mut Cursor) -> Result<Vec<Value>> {
+    let mut values = vec![];
+    while !block.is_eof() {
+        values.push( parse_value(block)? );
+        let _ = block.take_ignore( [Token::Comma] );
+    }
+    Ok(values)
+}
+
+
+fn parse_value(cursor: &mut Cursor) -> Result<Value> {
+    let v = if let Some(mut block) = cursor.take_delimited(Token::block_brace()) {
+        Value::Map( parse_nested_map(&mut block)? )
+    } else if let Some(mut block) = cursor.take_delimited( Token::block_paren() ) {
+        Value::Array( parse_nested_array(&mut block)? )
     } else {
-
-    }
-    let v = match cursor.take_one() {
-        Token::Str(s) => Value::String(s.to_string()),
-        Token::Ident(s) => Value::Ident(s.to_string()),
-        Token::Integer(v) => Value::Number(Number::from(*v)),
-        Token::Float(v) => Value::Number(Number::from(*v)),
-        Token::True => Value::Bool(true),
-        Token::False => Value::Bool(false),
-        Token::Ident(s) => Value::Ident(s.to_string()),
-        _ => return None
+        let mark = Some(cursor.mark());
+        match cursor.take_one() {
+            Token::Str(s) => Value::String(s.to_string()),
+            Token::Ident(s) => Value::Ident(s.to_string()),
+            Token::Integer(v) => Value::Number(Number::from(*v)),
+            Token::Float(v) => Value::Number(Number::from(*v)),
+            Token::True => Value::Bool(true),
+            Token::False => Value::Bool(false),
+            Token::Ident(s) => Value::Ident(s.to_string()),
+            _ => return Err(ParseError::expect_value(mark,cursor))
+        }
     };
-    Some(v)
-    match cursor.peek::<1>()[0] {
-        Token::Str(s) => {
-            let val = Value::String(s.to_string());
-            cursor.take::<1>();
-            Ok(val)
-        }
-        Token::Integer(n) => {
-            let val = Value::Number(Number::I64(*n));
-            cursor.take::<1>();
-            Ok(val)
-        }
-        Token::Float(f) => {
-            let val = Value::Number(Number::F64(*f));
-            cursor.take::<1>();
-            Ok(val)
-        }
-        Token::True => {
-            cursor.take::<1>();
-            Ok(Value::Bool(true))
-        }
-        Token::False => {
-            cursor.take::<1>();
-            Ok(Value::Bool(false))
-        }
-        Token::Ident(s) => {
-            let val = Value::Ident(s.clone());
-            cursor.take::<1>();
-            Ok(val)
-        }
-        Token::LBracket => {
-            let mut block = cursor.extract_brackets()?;
-            let mut arr = Vec::new();
-
-            while !block.is_eof() {
-                if block.is_eof() {
-                    break;
-                }
-                arr.push(parse_value(&mut block)?);
-                if matches!(block.peek::<1>()[0], Token::Comma) {
-                    block.take::<1>();
-                }
-            }
-
-            Ok(Value::Array(arr))
-        }
-        Token::LBrace => {
-            let mut block = cursor.extract_block()?;
-            let mut map = HashMap::new();
-
-            while !block.is_eof() {
-                if block.is_eof() {
-                    break;
-                }
-
-                if let [Token::Ident(key), Token::Colon] = block.peek() {
-                    let key = key.clone();
-                    block.take::<2>();
-                    let val = parse_value(&mut block)?;
-                    map.insert(key, val);
-
-                    if matches!(block.peek::<1>()[0], Token::Comma) {
-                        block.take::<1>();
-                    }
-                } else {
-                    break;
-                }
-            }
-
-            Ok(Value::Map(map))
-        }
-        _ => Err(format!("Unexpected token in value: {:?}", cursor.peek::<1>()[0])),
-    }
+    Ok(v)
 }
 
 
-macro_rules! taker {
-    ( [ $($args:ty),* ] , $wrap:stmt ) => {
-        |ts| {
-            if let [ $($args),* ] = ts {
-                Some( $wrap )
-            } else {
-                None
-            }
-        }
-    }
-}
-
-fn parse_parameters(cursor: &mut Cursor) -> Option<Parameters> {
-    let block_cursor = cursor.take_delimited( Token::block_paren() )?;
-
-    while !cursor.is_eof() {
-        if let [Token::Ident(_), Token::Equal] = cursor.peek() {
-
-        }
-        let value = parse_value(cursor);
-        cursor.take_if( [Token::Comma] );
-
-    }
-
-    if let Some( (key,value)) = cursor.take_if_map( taker!( [Token::Ident( key ), Token::Equal, value], (key,value) ) ) {
-
-    }
-    // Map 형태 확인: Ident = Value
-    if let [Token::Ident(_), Token::Equal] = cursor.peek() {
-        let mut map = HashMap::new();
-
-        loop {
-            if cursor.is_eof() {
-                break;
-            }
-
-            if let [Token::Ident(key), Token::Equal] = cursor.peek() {
-                let key = key.clone();
-                cursor.take::<2>();
-                let val = parse_value(cursor)?;
-                map.insert(key, val);
-
-                if matches!(cursor.peek::<1>()[0], Token::Comma) {
-                    cursor.take::<1>();
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        Ok(Parameters::Map(map))
+fn parse_parameters(cursor: &mut Cursor) -> Result<Parameters> {
+    let mark = Some(cursor.mark());
+    if let Ok(map) = parse_nested_map(cursor).err_rollback() {
+        Ok( Parameters::Map( map ) )
+    } else if let Ok(arr) = parse_nested_array(cursor).err_rollback() {
+        Ok( Parameters::Args( arr ) )
     } else {
-        // Args
-        let mut args = Vec::new();
-
-        while !cursor.is_eof() {
-            if cursor.is_eof() {
-                break;
-            }
-            args.push(parse_value(cursor)?);
-            if matches!(cursor.peek::<1>()[0], Token::Comma) {
-                cursor.take::<1>();
-            } else {
-                break;
-            }
-        }
-
-        Ok(Parameters::Args(args))
+        Err( ParseError::not_parameter(mark,cursor) )
     }
 }
 
-fn parse_component(cursor: &mut Cursor) -> Result<Component, String> {
-    match cursor.peek_one() {
-        Token::Ident("style") => {
-            parse_style_block()
-        }
-        Token::Id(id) => {
+fn parse_component(cursor: &mut Cursor) -> Result<Component> {
+    let mark = Some(cursor.mark());
+    let Token::Ident(name) = cursor.take_one() else { return Err(ParseError::expect_ident(mark,cursor)) };
 
-        }
-        Token::Class(class) => {
+    let parameter = parse_parameters(cursor).err_rollback().ok();
 
+    let selectors = cursor.take_map_until( |t| {
+        match t {
+            Token::Id(id) => Some( Selector::Id(id.to_string()) ),
+            Token::Class(cls) => Some( Selector::Class(cls.to_string()) ),
+            _ => None
         }
-        Token::Ident(widget) => {
+    });
 
-        }
-        @unk _  => {
-            return Err(format!("Unexpected token in component: {:?}", unk);
-        }
+    let mut id = None;
+    let mut classes = vec![];
+    while !cursor.is_eof() {
+        take_if!(cursor,
+            [Token::Id(identify)] => id = Some(identify.to_string()),
+            [Token::Class(class)] => classes.push( class.to_string() ),
+            _ => break
+        );
     }
 
+    if let Some(body) = cursor.take_delimited(Token::block_brace()) {
+        // Body
+        let mut text = None;
+        let mut properties = HashMap::new();
+        let mut children = Vec::new();
 
-    // Name
-    let name = match cursor.take::<1>()[0] {
-        Token::Ident(s) => s.clone(),
-        _ => return Err("Expected component name".to_string()),
-    };
-
-    // Parameters (연속 가능)
-    let mut params = Vec::new();
-    while matches!(cursor.peek::<1>()[0], Token::LParen) {
-        let mut param_tokens = cursor.extract_parens()?;
-        params.push(parse_parameters(&mut param_tokens)?);
-    }
-
-    // IDs
-    let mut ids = Vec::new();
-    while matches!(cursor.peek::<1>()[0], Token::Id(_)) {
-        if let Token::Id(id) = cursor.take::<1>()[0] {
-            ids.push(id.clone());
-        }
-    }
-
-    // Classes
-    let mut classes = Vec::new();
-    while matches!(cursor.peek::<1>()[0], Token::Class(_)) {
-        if let Token::Class(cls) = cursor.take::<1>()[0] {
-            classes.push(cls.clone());
-        }
-    }
-
-    // Body
-    let mut text = None;
-    let mut properties = HashMap::new();
-    let mut children = Vec::new();
-
-    if matches!(cursor.peek::<1>()[0], Token::LBrace) {
-        let mut body = cursor.extract_block()?;
 
         while !body.is_eof() {
-            if body.is_eof() {
-                break;
-            }
-
             match body.peek::<3>() {
                 // "text"
                 [Token::Str(s), ..] => {
@@ -416,6 +345,10 @@ fn parse_component(cursor: &mut Cursor) -> Result<Component, String> {
         }
     }
 
+
+
+
+
     Ok(Component {
         name,
         params,
@@ -427,41 +360,41 @@ fn parse_component(cursor: &mut Cursor) -> Result<Component, String> {
     })
 }
 
-// ==================== Main Parse ====================
-pub fn parse(input: &str) -> Result<Vec<AstNode>, String> {
-    let tokens: Vec<Token> = Token::lexer(input)
-        .filter_map(|t| t.ok())
-        .collect();
+pub fn parse(input: &str) -> Result<ParsedDocument> {
+    let spanned:Vec<(Token,Span)> = Token::lexer(input).spanned().filter_map(| (t,s) | t.map( |v| (v,s) ).ok() ).collect::<Vec<_>>();
 
-    let mut cursor = TokenCursor::new(&tokens);
+    let (tokens, spans):(Vec<Token>, Vec<Span>) = spanned.into_iter().unzip();
+    // let tokens: Vec<Token> = Token::lexer(input)
+    //     .filter_map(|t| t.ok())
+    //     .collect();
+
+    let mut cursor = Cursor::new(&tokens);
     let mut nodes = Vec::new();
 
+    let mut styles = vec![];
+    let mut components = vec![];
+
+    let mark = cursor.mark();
     while !cursor.is_eof() {
-        // style { ... } 또는 #id { ... } 또는 .class { ... }
-        match cursor.peek::<3>() {
-            [Token::Ident(name), ..] if name == "style" => {
-                cursor.take::<1>();
-                let mut block = cursor.extract_block()?;
-                let style = parse_style_block(&mut block)?;
-                nodes.push(AstNode::Style(style));
-            }
-            [Token::Id(_) | Token::Class(_), ..] => {
-                let mut item_cursor = cursor.clone();
-                let item = parse_style_item(&mut item_cursor)?;
-                cursor.idx = item_cursor.idx;
-                nodes.push(AstNode::Style(Style { items: vec![item] }));
-            }
-            [Token::Ident(_), ..] => {
-                let component = parse_component(&mut cursor)?;
-                nodes.push(AstNode::Component(component));
-            }
-            _ => {
-                cursor.take::<1>();
-            }
+        if let Ok(style_block) = parse_style_block(&mut cursor).err_rollback() {
+            styles.extend(style_block);
+            continue;
         }
+
+        if let Ok(style_item) = parse_style_item(&mut cursor).err_rollback() {
+            styles.push(style_item);
+            continue;
+        }
+
+        if let Ok(component) = parse_component(&mut cursor).err_rollback() {
+            components.push(component);
+            continue;
+        }
+
+        return Err(ParseError::unknown_start(Some(mark), &cursor))
     }
 
-    Ok(nodes)
+    Ok( ParsedDocument { styles, components } )
 }
 
 // ==================== Tests ====================
@@ -479,6 +412,7 @@ mod tests {
             }
 
             #myFlex { border:2px }
+
             .background_white { background-color: WHITE }
 
             Flex(MainFill) #myFlex .background_white {
