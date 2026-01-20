@@ -8,4 +8,4 @@ include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
 
 [dependencies]
 logos = "0.16.0"
-chumsky = "1.0.0-alpha.8"
+thiserror = "2"

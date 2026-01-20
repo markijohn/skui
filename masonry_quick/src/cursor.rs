@@ -141,25 +141,6 @@ impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
         }
     }
 
-    pub fn take_if_until_oneof<const SIZED: usize>(&mut self, v:[T;SIZED]) -> bool {
-        let org = self.idx;
-        let arr = self.take::<SIZED>();
-        while self.is_eof() {
-
-        }
-        for vi in v.into_iter() {
-            if vi == self.take_one() {
-
-            }
-        }
-        if v.iter().any(|&x| x == self.take_one()) {
-            self.idx = org;
-            true
-        } else {
-            self.idx = org;
-            false
-        }
-    }
 
     // 고정 크기의 배열을 take 하여 검사하고 원하는대로 맵핑되었으면 변환하며
     // 아닐 경우는 커서를 원복시킴
@@ -226,12 +207,12 @@ impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
 
     pub fn peek_delimited(&mut self, (start,end):(T,T) ) -> Option<TokenCursor<'a,T>> {
         let org_idx = self.idx;
-        let r = self.take_delimited( (start, end) );
+        let r = self.take_if_delimited( (start, end) );
         self.idx = org_idx;
         r
     }
 
-    pub fn take_delimited(&mut self, (start,end):(T,T) ) -> Option<TokenCursor<'a,T>> {
+    pub fn take_if_delimited(&mut self, (start,end):(T, T) ) -> Option<TokenCursor<'a,T>> {
         let org_idx = self.idx;
         if start == self.take_one() {
             let block_start = self.idx;
