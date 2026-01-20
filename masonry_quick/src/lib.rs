@@ -194,8 +194,20 @@ pub enum Value {
 fn parse_style_nested_properties(mut cursor: Cursor) -> Result< Vec<StyleProperty> > {
     let mut style_props = Vec::new();
 
+    // while !cursor.is_eof() {
+    //     if let [Token::Ident(key), Token::Colon] = cursor.take() {
+    //         let idx = cursor.idx();
+    //         let css_val = cursor.take_map_until( | t | CssValue::try_from( (idx,t) ).ok() );
+    //         style_props.push( StyleProperty { key:key.to_string(), values:css_val } );
+    //     } else {
+    //         return Err(ParseError::expect_ident(&cursor))
+    //     }
+    //     let _ = cursor.take_ignore( [Token::Semicolon] );
+    // }
     while !cursor.is_eof() {
-        if let [Token::Ident(key), Token::Colon] = cursor.take() {
+        let (next, r) = cursor.take2();
+        cursor = next;
+        if let [Token::Ident(key), Token::Colon] = r {
             let idx = cursor.idx();
             let css_val = cursor.take_map_until( | t | CssValue::try_from( (idx,t) ).ok() );
             style_props.push( StyleProperty { key:key.to_string(), values:css_val } );
@@ -204,6 +216,7 @@ fn parse_style_nested_properties(mut cursor: Cursor) -> Result< Vec<StylePropert
         }
         let _ = cursor.take_ignore( [Token::Semicolon] );
     }
+
     Ok( style_props )
 }
 
@@ -220,8 +233,8 @@ fn parse_def_selector(mut cursor:Cursor) -> CursorResult<Selector> {
 fn parse_def_selectors(mut cursor:Cursor) -> CursorResult<Vec<Selector>> {
     let mut selectors = Vec::new();
     while !cursor.is_eof() && cursor.peek_one() != Token::LBrace {
-        let (next_cursor,selector) = parse_def_selector(cursor.fork())?;
-        cursor = next_cursor;
+        let selector;
+        (cursor,selector) = parse_def_selector(cursor.fork())?;
         selectors.push( selector );
     }
     cursor.ok_with(selectors)
@@ -389,11 +402,15 @@ fn parse_tokens( tokens: &[Token], spans:&[Span] ) -> Result<ParsedDocument> {
             continue;
         }
 
-        if let [Token::Id(_id)] = cursor.peek() {
-            let (next, style) = parse_style_item(cursor.fork())?;
+        // if let [Token::Id(_id)] = cursor.peek() {
+        //     let (next, style) = parse_style_item(cursor.fork())?;
+        //     cursor = next;
+        //     styles.push(style);
+        //     continue;
+        // }
+        if let Ok( (next,style)) = parse_style_item(cursor.fork()) {
             cursor = next;
             styles.push(style);
-            continue;
         }
 
         if let [Token::Class(_cls)] = cursor.peek() {

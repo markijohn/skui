@@ -60,22 +60,18 @@ pub enum CursorBreak {
     NoBreak
 }
 
-#[derive(Debug,Clone,Copy)]
-pub struct CursorMark(usize);
-
 
 #[derive(Debug)]
 pub struct TokenCursor<'a,T> {
     base_idx: usize,
     idx: usize,
     tokens: &'a [T],
-    default: T,
 }
 
 
 impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
     pub fn new(tokens: &'a [T]) -> TokenCursor<'a,T> {
-        Self { base_idx:0, idx:0, tokens, default: T::default() }
+        Self { base_idx:0, idx:0, tokens }
     }
 
     pub fn idx(&self) -> usize {
@@ -83,11 +79,11 @@ impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
     }
 
     pub fn fork(&self) -> TokenCursor<'a,T> {
-        Self { base_idx:self.base_idx, idx:self.idx, tokens:self.tokens, default:self.default }
+        Self { base_idx:self.base_idx, idx:self.idx, tokens:self.tokens }
     }
     
     pub fn is_eof(&self) -> bool {
-        self.idx == self.tokens.len()
+        self.idx >= self.tokens.len()
     }
 
     pub fn peek_slice(&self, size: usize) -> &[T] {
@@ -125,7 +121,7 @@ impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
     pub fn take_ignore_until<const SIZED: usize>(
         &mut self,
         allow_eof: bool,
-        pred: impl Fn(&[T; SIZED]) -> bool,
+        pred: impl Fn([T; SIZED]) -> bool,
     ) -> bool {
         let org = self.idx;
         loop {
@@ -135,7 +131,7 @@ impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
                 }
                 return allow_eof
             }
-            if pred( &self.take::<SIZED>() ) {
+            if pred( self.take::<SIZED>() ) {
                 return true
             }
         }
@@ -167,6 +163,11 @@ impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
         }
         self.idx = (self.idx+SIZED).min( self.tokens.len() );
         r
+    }
+
+    pub fn take2<const SIZED: usize>(mut self) -> (TokenCursor<'a,T>,[T; SIZED]) {
+        let r = self.take::<SIZED>();
+        (self,r)
     }
 
     pub fn take_map_until<R>(
@@ -235,6 +236,148 @@ impl <'a,T> TokenCursor<'a,T> where T: Clone + Copy + PartialEq + Default {
 
         self.idx = org_idx;
         None
+    }
+
+    pub fn ok_with<RT,E>(self, t:RT) -> Result<(Self,RT),E> {
+        Ok( (self,t) )
+    }
+
+    pub fn peek_all(&self) -> &[T] {
+        self.tokens
+    }
+}
+
+
+
+
+#[derive(Debug)]
+pub struct TokenCursor2<'a,T> {
+    base_idx: usize,
+    tokens: &'a [T],
+}
+
+
+impl <'a,T> TokenCursor2<'a,T> where T: Clone + Copy + PartialEq + Default {
+    pub fn new(tokens: &'a [T]) -> TokenCursor2<'a,T> {
+        Self { base_idx:0, tokens }
+    }
+
+    pub fn idx(&self) -> usize {
+        self.base_idx
+    }
+
+    pub fn fork(&self) -> TokenCursor2<'a,T> {
+        Self { base_idx:self.base_idx, tokens:self.tokens }
+    }
+
+    pub fn is_eof(&self) -> bool {
+        self.tokens.is_empty()
+    }
+
+    pub fn take_one(mut self) -> (Self,T) {
+        let (c,t) = self.take::<1>();
+        (c, t[0])
+    }
+
+    pub fn take_ignore_if<const SIZED: usize>(self, v:[T;SIZED]) -> (Self,bool) {
+        let ct = self.fork();
+        let (next,r) = ct.take::<SIZED>();
+        if v == r {
+            (next,true)
+        } else {
+            (self,false)
+        }
+    }
+
+    pub fn take_ignore_until<const SIZED: usize>(
+        mut self,
+        allow_eof: bool,
+        pred: impl Fn([T; SIZED]) -> bool,
+    ) -> (Self,bool) {
+        let mut ct = self.fork();
+        loop {
+            if ct.is_eof() {
+                if !allow_eof {
+                    ct.tokens = self.tokens;
+                }
+                return (ct,allow_eof)
+            }
+            let (next, r) = ct.take::<SIZED>();
+            ct = next;
+            if pred( r ) {
+                return (ct,true)
+            }
+        }
+    }
+
+    // 고정 크기의 배열을 take
+    pub fn take<const SIZED: usize>(mut self) -> (Self,[T; SIZED]) {
+        let mut r = [T::default(); SIZED];
+        let (slice,next) = self.tokens.split_at( SIZED.min(self.tokens.len()) );
+        r[..slice.len()].copy_from_slice(slice);
+        self.tokens = next;
+        (self, r)
+    }
+
+    pub fn take_map_until<R>(
+        &mut self,
+        check: impl Fn(T) -> Option<R>,
+    ) -> Vec<R> {
+        let mut rv = Vec::new();
+        for t in self.tokens[self.idx..].iter() {
+            if let Some(r) = check(*t) {
+                rv.push(r);
+                self.idx += 1;
+            } else {
+                break;
+            }
+        }
+        rv
+    }
+
+    //
+    pub fn take_filtermap_until<R,E>(
+        &mut self,
+        check: impl Fn(T) -> Result<Option<R>,E>,
+    ) -> Result<Vec<R>,E> {
+
+
+        let mut rv = Vec::new();
+        for t in self.tokens[self.idx..].iter() {
+            let (brk,r) = check(*t);
+            if let Some(r) = r {
+                rv.push(r);
+            }
+        }
+        rv
+    }
+
+    pub fn take_delimited_cursor_if(mut self, (start,end):(T, T) ) -> (Self,Option<TokenCursor<'a,T>>) {
+        let mut ct = self.fork();
+        let first;
+        (ct,first) = ct.take_one();
+        if start == first {
+            let block_start = ct.tokens;
+            let mut cnt = 0;
+            let mut depth = 1;
+            while !ct.is_eof() {
+                let next;
+                (ct,next) = ct.take_one();
+                cnt += 1;
+                if start == next {
+                    depth += 1;
+                } else if end == next {
+                    depth -= 1;
+                    if depth == 0 {
+                        let mut cursor = TokenCursor::new(&block_start[ .. cnt]);
+                        cursor.base_idx = self.base_idx + cnt;
+                        return (ct, Some( cursor ) );
+                    }
+                }
+            }
+        }
+
+        (self,None)
     }
 
     pub fn ok_with<RT,E>(self, t:RT) -> Result<(Self,RT),E> {
