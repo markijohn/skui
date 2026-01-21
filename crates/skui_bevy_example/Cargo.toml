@@ -1,5 +1,5 @@
 [package]
-name = "masonry_quick_macro"
+name = "skui_masonry_macro"
 version = "0.1.0"
 license = "MIT"
 description = "derive impls for masonry"

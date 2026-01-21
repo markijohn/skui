@@ -1,0 +1,19 @@
+[package]
+name = "skui_masonry_example"
+version = "0.1.0"
+license = "MIT"
+description = "skui masonry example"
+repository = "https://github.com/markijohn/skui"
+edition = "2024"
+
+
+[[bin]]
+name = "masonry_editor"
+path = "src/editor.rs"
+
+[[bin]]
+name = "masonry_derive"
+path = "src/derive.rs"
+
+[dependencies]
+masonry = "0.4.0"

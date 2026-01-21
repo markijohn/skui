@@ -12,12 +12,12 @@ macro_rules! take_match {
         )*
         $( _ => $be:expr )?
     ) => {{
-        if let (new_cursor, [ $($p1),+ ]) = $cursor.fork().take() {
+        if let (new_cursor, [ $($p1),+ ]) = $cursor.fork().consume() {
             $cursor = new_cursor;
             $b1
         }
         $(
-            else if let (new_cursor, [ $($p),+ ]) = $cursor.fork().take() {
+            else if let (new_cursor, [ $($p),+ ]) = $cursor.fork().consume() {
                 $cursor = new_cursor;
                 $b
             }
@@ -38,6 +38,18 @@ pub struct CursorSpan {
 impl CursorSpan {
     pub fn idx(&self) -> usize {
         self.idx
+    }
+}
+
+#[derive(Debug)]
+pub struct SplitCursor<'a,T> {
+    pub next : TokenCursor<'a,T>,
+    pub result : TokenCursor<'a,T>,
+}
+
+impl <'a,T> SplitCursor<'a,T> {
+    pub fn new(next:TokenCursor<'a,T>, result:TokenCursor<'a,T>) -> Self {
+        Self { next, result }
     }
 }
 
@@ -82,15 +94,15 @@ impl <'a,T> TokenCursor<'a,T> where T: Debug + Clone + Copy + PartialEq + Defaul
     }
 
     // take one Token. if cursor is eof then return the Default
-    pub fn take_one(self) -> (Self,T) {
-        let (c,t) = self.take::<1>();
+    pub fn consume_one(self) -> (Self, T) {
+        let (c,t) = self.consume::<1>();
         (c, t[0])
     }
 
 
-    pub fn ignore_if<const SIZED: usize>(self, v:[T;SIZED]) -> (Self,bool) {
+    pub fn ignore<const SIZED: usize>(self, v:[T;SIZED]) -> (Self, bool) {
         let ct = self.fork();
-        let (next,r) = ct.take::<SIZED>();
+        let (next,r) = ct.consume::<SIZED>();
         if v == r {
             (next,true)
         } else {
@@ -101,7 +113,7 @@ impl <'a,T> TokenCursor<'a,T> where T: Debug + Clone + Copy + PartialEq + Defaul
     //
     pub fn ignore_oneof(self, v:&[T]) -> (Self,bool) {
         let ct = self.fork();
-        let (next,r) = ct.take_one();
+        let (next,r) = ct.consume_one();
         if v.iter().find(|&&e| e == r).is_some() {
             (next,true)
         } else {
@@ -110,9 +122,9 @@ impl <'a,T> TokenCursor<'a,T> where T: Debug + Clone + Copy + PartialEq + Defaul
     }
 
     pub fn ignore_until(self, pred:impl Fn(T) -> bool) -> Self {
-        let mut ct = self.fork();
+        let mut ct = self;
         while !ct.is_eof() {
-            let (next,t) = ct.fork().take_one();
+            let (next,t) = ct.fork().consume_one();
             if pred( t ) {
                 break;
             } else {
@@ -123,7 +135,7 @@ impl <'a,T> TokenCursor<'a,T> where T: Debug + Clone + Copy + PartialEq + Defaul
     }
 
     // 고정 크기의 배열을 take
-    pub fn take<const SIZED: usize>(self) -> (Self,[T; SIZED]) {
+    pub fn consume<const SIZED: usize>(self) -> (Self, [T; SIZED]) {
         let mut r = [T::default(); SIZED];
         let actual_num = SIZED.min(self.tokens.len());
         let slice = &self.tokens[ .. actual_num];
@@ -131,18 +143,12 @@ impl <'a,T> TokenCursor<'a,T> where T: Debug + Clone + Copy + PartialEq + Defaul
         (self.skip(actual_num), r)
     }
 
-    // pub fn take_slice(self, size:usize) -> (Self, &'a[T]) {
-    //     let actual_num = size.min(self.tokens.len());
-    //     let slice = &self.tokens[ .. actual_num];
-    //     (self.skip(actual_num), slice)
-    // }
-
-    pub fn collect_until<R,E>(
+    pub fn consume_collect_until<R,E>(
         self,
         check: impl Fn(Self) -> Result<(Self,Option<R>),E>,
     ) -> Result<(Self,Vec<R>),E> {
         let mut rv = Vec::new();
-        let mut ct = self.fork();
+        let mut ct = self;
         while !ct.is_eof() {
             match check(ct) {
                 Ok( (c,Some(t)) ) => { ct = c;rv.push(t) },
@@ -153,42 +159,39 @@ impl <'a,T> TokenCursor<'a,T> where T: Debug + Clone + Copy + PartialEq + Defaul
         Ok( (ct,rv) )
     }
 
-    pub fn take_until(self, pred:impl Fn(T) -> bool) -> (Self,Self) {
+    pub fn split_until(self, pred:impl Fn(T) -> bool) -> Option<SplitCursor<'a,T>> {
         if let Some( (idx,_) ) = self.tokens.iter().enumerate().find( |&(_,&t) | pred(t) ) {
             let mut cursor = TokenCursor::new( &self.tokens[ .. idx] );
             cursor.base_idx = self.base_idx;
-            (self.skip(idx), cursor)
+            Some( SplitCursor::new( self.skip(idx), cursor ) )
         } else {
-            let len = self.tokens.len();
-            (self.fork(), self.skip( len ))
+            None
         }
     }
 
-    //0 is next cursor, 1 is block cursor
-    pub fn take_delimited(self, (start,end):(T, T) ) -> Option<(Self,Self)> {
+
+    pub fn consume_delimited_inner(self, (start,end):(T, T) ) -> Option<SplitCursor<'a,T>> {
         assert_ne!( start, T::default() );
         assert_ne!( end, T::default() );
-        let mut ct = self.fork();
-        let first;
-        (ct,first) = ct.take_one();
+
+        let (mut ct,first) = self.consume_one();
         if start == first {
-            let block_start = ct.tokens;
+            let mut block_cursor = ct.fork();
             let mut cnt = 0;
             let mut depth = 1;
             while !ct.is_eof() {
                 let next;
-                (ct,next) = ct.take_one();
-                cnt += 1;
+                (ct,next) = ct.consume_one();
                 if start == next {
                     depth += 1;
                 } else if end == next {
                     depth -= 1;
                     if depth == 0 {
-                        let mut cursor = TokenCursor::new(&block_start[ .. cnt]);
-                        cursor.base_idx = self.base_idx + cnt;
-                        return Some( (ct,cursor) );
+                        block_cursor.tokens = &block_cursor.tokens[ .. cnt];
+                        return Some( SplitCursor::new(ct, block_cursor) );
                     }
                 }
+                cnt += 1;
             }
         }
         None
@@ -199,12 +202,6 @@ impl <'a,T> TokenCursor<'a,T> where T: Debug + Clone + Copy + PartialEq + Defaul
     }
 
     pub fn ok_with<RT,E>(self, t:RT) -> Result<(Self,RT),E> {
-        Ok( self.with(t) )
-    }
-
-    pub fn with<R>(self, r:R) -> (Self,R) { (self,r) }
-
-    fn peek_all(&self) -> &[T] {
-        self.tokens
+        Ok( (self,t) )
     }
 }

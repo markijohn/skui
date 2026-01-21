@@ -1,5 +1,5 @@
 [package]
-name = "masonry_quick"
+name = "skui_egui_macro"
 version = "0.1.0"
 authors = ["markijohn <kitae.john@gmail.com>"]
 edition = "2024"
@@ -7,5 +7,4 @@ include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
 
 
 [dependencies]
-logos = "0.16.0"
-thiserror = "2.*"
+xilem = "0.4.0"

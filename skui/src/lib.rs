@@ -7,7 +7,7 @@ use cursor::TokenCursor;
 use std::collections::HashMap;
 use logos::{Logos, Span};
 use thiserror::Error;
-use crate::cursor::CursorSpan;
+use crate::cursor::{CursorSpan, SplitCursor};
 
 pub type Cursor<'a> = TokenCursor<'a,Token<'a>>;
 
@@ -199,17 +199,17 @@ pub enum Value {
 }
 
 
-fn parse_style_nested_properties(mut cursor: Cursor) -> Result< Vec<StyleProperty> > {
-    let (_cursor, styles) = cursor.collect_until( |c| {
-        let mut c = c.ignore_until( |t| t != Token::Semicolon );
+fn parse_style_inner_properties(cursor: Cursor) -> Result< Vec<StyleProperty> > {
+    let (_cursor, styles) = cursor.consume_collect_until( |c| {
+        let c = c.ignore_until( |t| t != Token::Semicolon );
         let span = c.span();
         if c.is_eof() {
             Ok( (c,None) )
-        } else if let (mut new_cursor,[Token::Ident(key), Token::Colon]) = c.fork().take() {
+        } else if let (mut new_cursor,[Token::Ident(key), Token::Colon]) = c.fork().consume() {
             let css_val;
-            (new_cursor,css_val) = new_cursor.collect_until( |c| {
+            (new_cursor,css_val) = new_cursor.consume_collect_until( |c| {
                 let span = c.span();
-                let (n,t) = c.take_one();
+                let (n,t) = c.consume_one();
                 Ok( (n,CssValue::try_from( (span,t) ).ok()) )
             } )?;
             let style_property = StyleProperty { key: key.to_string(), values: css_val };
@@ -222,8 +222,9 @@ fn parse_style_nested_properties(mut cursor: Cursor) -> Result< Vec<StylePropert
 }
 
 fn parse_def_selectors(cursor:Cursor) -> CursorResult<Vec<Selector>> {
-    let (cursor, selectors) = cursor.take_until( |t| t == Token::LBrace );
-    let (_,selectors) = selectors.collect_until( |mut c| {
+    let Some(SplitCursor{next, result}) = cursor.fork().split_until( |t| t == Token::LBrace )
+    else { return Err(ParseError::expect_brace_block(cursor.span())) };
+    let (_,selectors) = result.consume_collect_until( |mut c| {
         let v = take_match!(c,
             [Token::Id(s)] => Selector::Id(s.to_string()),
             [Token::Class(s)] => Selector::Class(s.to_string()),
@@ -232,47 +233,28 @@ fn parse_def_selectors(cursor:Cursor) -> CursorResult<Vec<Selector>> {
         );
         Ok( (c,Some(v)) )
     })?;
-    Ok( (cursor,selectors) )
+    Ok( (next,selectors) )
 }
 
 fn parse_style_item(cursor:Cursor) -> CursorResult<Style> {
     let (cursor,selector) = parse_def_selectors(cursor)?;
-    println!("{cursor:?}");
     let span = cursor.span();
-    let (cursor,block) = cursor.take_delimited( Token::block_brace() ).ok_or_else(|| ParseError::expect_brace_block(span))?;
-    let properties = parse_style_nested_properties( block )?;
+    let SplitCursor{next:cursor, result:block} = cursor.consume_delimited_inner( Token::block_brace() ).ok_or_else(|| ParseError::expect_brace_block(span))?;
+    let properties = parse_style_inner_properties( block )?;
     cursor.ok_with( Style { selector, properties })
 }
 
-fn parse_style_block(mut cursor:Cursor) -> CursorResult<Vec<Style>> {
-    let mut items = Vec::new();
-    let span = cursor.span();
-    if let (mut cursor,Token::Ident("style")) = cursor.take_one() {
-        let span = cursor.span();
-        let mut block;
-        (cursor,block) = cursor.take_delimited( Token::block_brace() ).ok_or_else(|| ParseError::expect_brace_block(span))?;
-        while !block.is_eof() {
-            let (next, style_item) = parse_style_item(block)?;
-            block = next;
-            items.push( style_item );
-        }
-        cursor.ok_with(items)
-    } else {
-        Err(ParseError::expect_ident(span))
-    }
-}
-
-fn parse_nested_map(mut cursor:Cursor) -> Result<HashMap<String, Value>> {
+fn parse_inner_map(mut cursor:Cursor) -> Result<HashMap<String, Value>> {
     let mut map = HashMap::new();
     while !cursor.is_eof() {
         let span = cursor.span();
-        if let (next_cursor, [Token::Ident(key), Token::Equal]) = cursor.take() {
+        if let (next_cursor, [Token::Ident(key), Token::Equal]) = cursor.consume() {
             cursor = next_cursor;
             let value;
             (cursor,value) = parse_value(cursor.fork())?;
             map.insert(key.to_string(), value);
             //TODO : check flag?
-            (cursor,_) = cursor.ignore_if( [Token::Comma] );
+            (cursor,_) = cursor.ignore( [Token::Comma] );
         } else {
             return Err(ParseError::expect_kv(span));
         }
@@ -280,31 +262,31 @@ fn parse_nested_map(mut cursor:Cursor) -> Result<HashMap<String, Value>> {
     Ok(map)
 }
 
-fn parse_nested_array(mut cursor:Cursor) -> Result<Vec<Value>> {
+fn parse_inner_array(mut cursor:Cursor) -> Result<Vec<Value>> {
     let mut values = vec![];
     while !cursor.is_eof() {
         let (next_cursor, value) = parse_value(cursor)?;
         cursor = next_cursor;
         values.push( value );
-        (cursor,_) = cursor.ignore_if( [Token::Comma] );
+        (cursor,_) = cursor.ignore( [Token::Comma] );
     }
     Ok(values)
 }
 
 
-fn parse_value(mut cursor:Cursor) -> CursorResult<Value> {
+fn parse_value(cursor:Cursor) -> CursorResult<Value> {
     let (cursor,value) = if let Ok( (cursor, comp) ) = parse_component(cursor.fork()) {
         (cursor, Value::Component(comp))
-    } else if let Some( (cursor,block) ) = cursor.fork().take_delimited(Token::block_brace()) {
-        let map = parse_nested_map(block)?;
+    } else if let Some( SplitCursor{next:cursor,result:block} ) = cursor.fork().consume_delimited_inner(Token::block_brace()) {
+        let map = parse_inner_map(block)?;
         (cursor, Value::Map( map ))
-    } else if let Some( (cursor,block) ) = cursor.fork().take_delimited( Token::block_bracket() ) {
-        let arr = parse_nested_array(block)?;
+    } else if let Some( SplitCursor{next:cursor,result:block} ) = cursor.fork().consume_delimited_inner( Token::block_bracket() ) {
+        let arr = parse_inner_array(block)?;
         (cursor, Value::Array( arr ))
     }
     else {
         let span = cursor.span();
-        let (cursor,value) = cursor.take_one();
+        let (cursor,value) = cursor.consume_one();
         let v = match value {
             Token::Str(s) => Value::String(s.to_string()),
             Token::Ident(s) => Value::Ident(s.to_string()),
@@ -312,7 +294,6 @@ fn parse_value(mut cursor:Cursor) -> CursorResult<Value> {
             Token::Float(v) => Value::Number(Number::F64(v)),
             Token::True => Value::Bool(true),
             Token::False => Value::Bool(false),
-            Token::Ident(s) => Value::Ident(s.to_string()),
             _ => return Err(ParseError::expect_value(span))
         };
         (cursor, v)
@@ -321,35 +302,35 @@ fn parse_value(mut cursor:Cursor) -> CursorResult<Value> {
 }
 
 
-fn parse_nested_parameters(mut cursor:Cursor) -> Result<Parameters> {
+fn parse_inner_parameters(cursor:Cursor) -> Result<Parameters> {
     if cursor.is_eof() {
         Ok( Parameters::Args( Vec::new() ) )
-    } else if let Ok( map ) = parse_nested_map(cursor.fork()) {
+    } else if let Ok( map ) = parse_inner_map(cursor.fork()) {
         Ok( Parameters::Map(map) )
-    } else if let Ok( arr ) = parse_nested_array(cursor.fork()) {
+    } else if let Ok( arr ) = parse_inner_array(cursor.fork()) {
         Ok( Parameters::Args( arr ) )
     } else {
         Err( ParseError::not_parameter( cursor.span() ) )
     }
 }
 
-fn parse_component(mut cursor:Cursor) -> CursorResult<Component> {
+fn parse_component(cursor:Cursor) -> CursorResult<Component> {
     let span = cursor.span();
-    let (cursor, Token::Ident(name)) = cursor.take_one()
+    let (cursor, Token::Ident(name)) = cursor.consume_one()
     else { return Err(ParseError::expect_ident(span)) };
 
     let name = name.to_string();
-    let span = cursor.span();
-    let (cursor,param_block) = cursor.take_delimited( Token::block_paren() )
-        .ok_or_else(|| ParseError::expect_parent_block(span))?;
-    let params = parse_nested_parameters(param_block)?;
+
+    let Some( SplitCursor{next:cursor,result:param_block} ) = cursor.fork().consume_delimited_inner( Token::block_paren() )
+    else { return Err(ParseError::expect_parent_block(cursor.span())) };
+    let params = parse_inner_parameters(param_block)?;
 
     let span = cursor.span();
-    let (mut cursor,selectors) = cursor.collect_until( |c| {
-        let (cursor, token) = c.take_one();
+    let (mut cursor,selectors) = cursor.consume_collect_until( |cursor| {
+        let (c, token) = cursor.fork().consume_one();
         match token {
-            Token::Id(id) => Ok( (cursor,Some( Selector::Id(id.to_string()) ) ) ),
-            Token::Class(cls) => Ok( (cursor,Some( Selector::Class(cls.to_string()) ) ) ),
+            Token::Id(id) => Ok( (c,Some( Selector::Id(id.to_string()) ) ) ),
+            Token::Class(cls) => Ok( (c,Some( Selector::Class(cls.to_string()) ) ) ),
             _ => Ok( (cursor,None) )
         }
     })?;
@@ -374,21 +355,21 @@ fn parse_component(mut cursor:Cursor) -> CursorResult<Component> {
 
     let mut properties = HashMap::new();
     let mut children = Vec::new();
-    if let Some( (next,mut block) ) = cursor.fork().take_delimited(Token::block_brace()) {
+    if let Some( SplitCursor{next,result:mut comp_block} ) = cursor.fork().consume_delimited_inner(Token::block_brace()) {
         cursor = next;
-        while !block.is_eof() {
-            let span = block.span();
-            if let Some( (end_of_block, mut child_block) ) = block.fork().take_delimited(Token::block_brace()) {
-                while !child_block.is_eof() {
-                    let (next, child) = parse_component(child_block)?;
-                    children.push( child );
-                    child_block = next;
-                }
-                block = end_of_block;
-            } else if let (next,[Token::Ident(key), Token::Colon]) = block.fork().take() {
-                block = next;
+        while !comp_block.is_eof() {
+            let span = comp_block.span();
+            //Try child component block
+            if let (_,[Token::Ident(key), Token::LParen]) = comp_block.fork().consume() {
+                let child;
+                (comp_block, child) = parse_component(comp_block)?;
+                children.push( child );
+            }
+            //Try property
+            else if let (next,[Token::Ident(key), Token::Colon]) = comp_block.fork().consume() {
+                comp_block = next;
                 let value;
-                (block, value) = parse_value(block)?;
+                (comp_block, value) = parse_value(comp_block)?;
                 properties.insert( key.to_string(), value );
             } else {
                 return Err(ParseError::expect_brace_block(span));
@@ -412,35 +393,30 @@ fn parse_tokens( tokens: &[Token], spans:&[Span] ) -> Result<ParsedDocument> {
     let mut components = vec![];
 
     while !cursor.is_eof() {
-        if let (_,Token::Ident("style")) = cursor.fork().take_one() {
-            let style_block;
-            println!("try style block");
-            (cursor, style_block) = parse_style_block(cursor)?;
-            println!("style block {:?}", style_block);
-            styles.extend(style_block);
-            continue;
-        }
-
         let mut check_fork = cursor.fork();
         let is_style_item = take_match!(check_fork,
             [Token::Id(_)] => true,
             [Token::Class(_)] => true,
+            [Token::Ident(_), Token::LParen] => false,
+            [Token::Ident(_)] => true,
             _ => false
         );
         if is_style_item {
             let style;
-            println!("try style item");
             (cursor, style) = parse_style_item(cursor)?;
-            println!("style item {:?}", style);
             styles.push(style);
             continue;
         }
 
-        let component;
-        println!("try component");
-        (cursor, component) = parse_component(cursor)?;
-        println!("component {:?}", component);
-        components.push(component);
+        if let (_, [Token::Ident(_), Token::LParen]) = cursor.fork().consume() {
+            let component;
+            (cursor, component) = parse_component(cursor)?;
+            components.push(component);
+            continue;
+        }
+
+        //Error
+        return Err(ParseError::unknown_start(cursor.span()));
     }
 
     Ok( ParsedDocument { styles, components } )
@@ -452,7 +428,7 @@ pub struct ParseDetailError {
     pub span: Span,
 }
 
-fn tokenize_from_str(input: &str) -> (Vec<Token>, Vec<Span>) {
+fn tokenize_from_str<'a:'b,'b>(input: &'a str) -> (Vec<Token<'b>>, Vec<Span>) {
     let spanned:Vec<(Token,Span)> = Token::lexer(input)
         .spanned()
         .filter_map(| (t,s) | t.map( |v| (v,s) ).ok() )
@@ -475,6 +451,94 @@ pub fn parse(input: &str) -> Result<ParsedDocument,ParseDetailError> {
     }
 }
 
+fn render_error(
+    input: &str,
+    span: Span,
+    context_lines: usize, // 이전 몇 줄 보여줄지
+) -> String {
+    #[derive(Debug)]
+    struct LineInfo {
+        line_no: usize,      // 1-based
+        line_start: usize,   // byte index
+        line_end: usize,     // byte index (newline 제외)
+    }
+
+    fn find_line(input: &str, pos: usize) -> LineInfo {
+        let mut line_no = 1;
+        let mut last_nl = 0;
+
+        for (i, c) in input.char_indices() {
+            if i >= pos {
+                break;
+            }
+            if c == '\n' {
+                line_no += 1;
+                last_nl = i + 1;
+            }
+        }
+
+        let line_end = input[last_nl..]
+            .find('\n')
+            .map(|i| last_nl + i)
+            .unwrap_or(input.len());
+
+        LineInfo {
+            line_no,
+            line_start: last_nl,
+            line_end,
+        }
+    }
+
+    fn byte_to_column(line: &str, byte_offset: usize) -> usize {
+        line[..byte_offset].chars().count()
+    }
+
+    let line = find_line(input, span.start);
+
+    let mut out = String::new();
+
+    // 이전 라인 출력
+    let mut current_line_start = line.line_start;
+    let mut current_line_no = line.line_no;
+
+    for _ in 0..context_lines {
+        if current_line_start == 0 {
+            break;
+        }
+        let prev = find_line(input, current_line_start - 1);
+        out = format!(
+            "{:>4} | {}\n{}",
+            prev.line_no,
+            &input[prev.line_start..prev.line_end],
+            out
+        );
+        current_line_start = prev.line_start;
+        current_line_no = prev.line_no;
+    }
+
+    // 현재 라인
+    let line_text = &input[line.line_start..line.line_end];
+    out.push_str(&format!(
+        "{:>4} | {}\n",
+        line.line_no,
+        line_text
+    ));
+
+    let col_start =
+        byte_to_column(line_text, span.start - line.line_start);
+    let col_end =
+        byte_to_column(line_text, span.end.min(line.line_end) - line.line_start)
+            .max(col_start + 1);
+
+    // caret 라인
+    out.push_str("     | ");
+    out.push_str(&" ".repeat(col_start));
+    out.push_str(&"^".repeat(col_end - col_start));
+    out.push('\n');
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,31 +546,32 @@ mod tests {
     #[test]
     fn test_parse() {
         let input = r#"
-            style {
-                Flex { background-color: black; padding:1px }
-                #list { border: 1px solid yellow }
-                .myBtn { border: 2px }
-            }
-
+            Flex { background-color: black; padding:1px }
+            #list { border: 1px solid yellow }
+            .myBtn { border: 2px }
             #myFlex { border:2px }
-
             .background_white { background-color: WHITE }
 
             Flex(MainFill) #myFlex .background_white {
                 myProperty1 : "data"
                 propertyMap : {key=1, key2=true}
-                {
-                    FlexItem(1.0) {  { Button("FlexItem") }  }
-                    FlexItem(2.0, Button("FlexItem2"))
-                    Button() { }
-                }
                 propertyAnother : [ 1,2,3 ]
+                FlexItem(1.0, Button("FlexItem1"))
+                FlexItem(2.0, Button("FlexItem2"))
+                Button()
+                Flex() {
+                    Label("1") Label("2")
+                }
             }
 
             Grid(2,3) {
-                {
-                    Label() {
-                    }
+                Label()
+            }
+
+            CustomWidget() {
+                Flex() {
+                    FlexItem( 0.5, Button("OK") )
+                    FlexItem( 0.5, Button("Cancel") )
                 }
             }
         "#;
@@ -524,7 +589,7 @@ mod tests {
             }
             Err(e) => {
                 println!("Parse error: {:?}", e);
-                panic!("Cause : {}", &input[e.span.start .. e.span.end]);
+                panic!("Cause : \n{}", render_error(input, e.span, 2));
             }
         }
     }
@@ -533,11 +598,27 @@ mod tests {
     fn narr() {
         let token = vec![ Token::Ident("MainFill") ];
         let cursor = Cursor::new(&token);
-        println!("{:?}", parse_nested_array(cursor).unwrap());
+        println!("{:?}", parse_inner_array(cursor).unwrap());
     }
 
     #[test]
     fn style_block() {
+        fn parse_style_block(cursor:Cursor) -> CursorResult<Vec<Style>> {
+            let mut items = Vec::new();
+            let span = cursor.span();
+            if let (cursor,Token::Ident("style")) = cursor.consume_one() {
+                let span = cursor.span();
+                let SplitCursor{next:cursor,result:mut block} = cursor.consume_delimited_inner( Token::block_brace() ).ok_or_else(|| ParseError::expect_brace_block(span))?;
+                while !block.is_eof() {
+                    let (next, style_item) = parse_style_item(block)?;
+                    block = next;
+                    items.push( style_item );
+                }
+                cursor.ok_with(items)
+            } else {
+                Err(ParseError::expect_ident(span))
+            }
+        }
         let input = r#"
 style {
     Flex { background-color: black; padding:1px }
@@ -548,16 +629,18 @@ style {
         let (tokens, spans) = tokenize_from_str(input);
         let cursor = Cursor::new(&tokens);
 
-        match parse_style_block(cursor) {
-            Ok( (cursor,parsed) ) => {
-                println!("Parsed successfully!");
-                println!("{:#?}", parsed);
-            }
-            Err(e) => {
+        if let (_,Token::Ident("style")) = cursor.fork().consume_one() {
+            match parse_style_block( cursor ) {
+                Ok( (cursor,style_block) ) => {
+                    println!("Parsed successfully!");
+                    println!("{:#?}", style_block);
+                }
+                Err(e) => {
 
-                println!("Parse error: {:?}", e);
-                let span = &spans[e.span.idx()];
-                panic!("Cause : {}", &input[span.start .. span.end]);
+                    println!("Parse error: {:?}", e);
+                    let span = &spans[e.span.idx()];
+                    panic!("Cause : {}", &input[span.start .. span.end]);
+                }
             }
         }
     }
