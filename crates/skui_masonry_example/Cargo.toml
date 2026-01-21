@@ -16,4 +16,6 @@ name = "masonry_derive"
 path = "src/derive.rs"
 
 [dependencies]
-masonry = "0.4.0"
+skui = {path="../../skui"}
+masonry = { git="https://github.com/linebender/xilem.git" }
+masonry_winit = {  git="https://github.com/linebender/xilem.git" }

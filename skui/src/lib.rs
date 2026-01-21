@@ -1,4 +1,5 @@
 mod token;
+mod value;
 mod cursor;
 
 use token::Token;
@@ -8,6 +9,8 @@ use std::collections::HashMap;
 use logos::{Logos, Span};
 use thiserror::Error;
 use crate::cursor::{CursorSpan, SplitCursor};
+
+pub use value::*;
 
 pub type Cursor<'a> = TokenCursor<'a,Token<'a>>;
 
@@ -175,27 +178,10 @@ pub struct Component {
 }
 
 #[derive(Debug, Clone)]
-pub struct ParsedDocument {
+pub struct SKUI {
     pub styles: Vec<Style>,
     pub components: Vec<Component>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Number {
-    I64(i64),
-    F64(f64),
-}
-
-#[derive(Debug, Clone)]
-pub enum Value {
-    Ident(String),
-    Bool(bool),
-    Number(Number),
-    String(String),
-    Array(Vec<Value>),
-    Map(HashMap<String, Value>),
-    Closure(String),
-    Component(Component),
+    spans : Vec<Span>,
 }
 
 
@@ -387,7 +373,7 @@ fn parse_component(cursor:Cursor) -> CursorResult<Component> {
     })
 }
 
-fn parse_tokens( tokens: &[Token], spans:&[Span] ) -> Result<ParsedDocument> {
+fn parse_tokens( tokens: &[Token], spans:&[Span] ) -> Result<(Vec<Style>,Vec<Component>)> {
     let mut cursor = Cursor::new(&tokens);
     let mut styles = vec![];
     let mut components = vec![];
@@ -419,7 +405,7 @@ fn parse_tokens( tokens: &[Token], spans:&[Span] ) -> Result<ParsedDocument> {
         return Err(ParseError::unknown_start(cursor.span()));
     }
 
-    Ok( ParsedDocument { styles, components } )
+    Ok( (styles, components) )
 }
 
 #[derive(Debug)]
@@ -438,10 +424,10 @@ fn tokenize_from_str<'a:'b,'b>(input: &'a str) -> (Vec<Token<'b>>, Vec<Span>) {
     (tokens, spans)
 }
 
-pub fn parse(input: &str) -> Result<ParsedDocument,ParseDetailError> {
+pub fn parse(input: &str) -> Result<SKUI,ParseDetailError> {
     let (tokens, spans) = tokenize_from_str(input);
     match parse_tokens(&tokens, &spans) {
-        Ok(parsed) => Ok(parsed),
+        Ok( (styles, components) ) => Ok( SKUI{ styles, components, spans } ),
         Err(e) => {
             Err( ParseDetailError {
                 span : spans[ e.span.idx() ].clone(),

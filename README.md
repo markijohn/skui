@@ -28,17 +28,16 @@ druid-xml-macro = {git="https://github.com/markijohn/druid-xml.git"}
 ```
 
 ## I HATE MAGIC CODE (skui_masonry_macro)
-```
+```css
 Flex { background-color: black; padding:1px }
 #list { border: 1px solid yellow }
 .myBtn { border: 2px }
 #myFlex { border:2px }
 .background_white { background-color: WHITE }
 
-
 Flex(MainFill) #myFlex .background_white {
 	myProperty1 : "data"
-	propertyMap : {key=1, key2=true}
+	propertyMap : {key:1, key2:true}
 	propertyAnother : [ 1,2,3 ]
 	FlexItem(1.0) {  Button("FlexItem")  }
 	FlexItem(2.0, Button("FlexItem2"))
@@ -54,14 +53,10 @@ Grid(2,3) {
 todo!()
 ```
 
-## I HATE MAGIC CODE (skui_egui_macro)
 
-* Rust code
-```
-```
-```rust
-todo!()
-```
+## DSL syntax
+- [DSL Guide](../skui/GUIDE.md)
+
 
 
 ## Style
@@ -190,8 +185,3 @@ todo!()
  </tr>
  </tbody>
 </table>
-
-## TODO
-* Load xml from project path
-* Animation : CSS `transition` and `Animation`
-* Drawable widget : like [`Android Drawable`](https://developer.android.com/guide/topics/resources/drawable-resource)

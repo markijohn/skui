@@ -5,7 +5,10 @@ authors = ["markijohn <kitae.john@gmail.com>"]
 edition = "2024"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
 
-
 [dependencies]
 logos = "0.16.0"
 thiserror = "2.*"
+
+[lib]
+name = "skui"
+path = "src/lib.rs"
