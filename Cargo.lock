@@ -2645,6 +2645,7 @@ dependencies = [
  "masonry",
  "masonry_winit",
  "skui",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

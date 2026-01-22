@@ -19,3 +19,4 @@ path = "src/derive.rs"
 skui = {path="../../skui"}
 masonry = { git="https://github.com/linebender/xilem.git" }
 masonry_winit = {  git="https://github.com/linebender/xilem.git" }
+thiserror = "2.*"

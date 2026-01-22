@@ -184,6 +184,12 @@ pub struct SKUI {
     spans : Vec<Span>,
 }
 
+impl SKUI {
+    pub fn parse(input: &str) -> Result<Self, SKUIParseError> {
+        parse(input).map_err(|e| SKUIParseError { span: e.span, kind: e.kind })
+    }
+}
+
 
 fn parse_style_inner_properties(cursor: Cursor) -> Result< Vec<StyleProperty> > {
     let (_cursor, styles) = cursor.consume_collect_until( |c| {
@@ -408,8 +414,8 @@ fn parse_tokens( tokens: &[Token], spans:&[Span] ) -> Result<(Vec<Style>,Vec<Com
     Ok( (styles, components) )
 }
 
-#[derive(Debug)]
-pub struct ParseDetailError {
+#[derive(Debug,Clone)]
+pub struct SKUIParseError {
     pub kind: ParseError,
     pub span: Span,
 }
@@ -424,12 +430,12 @@ fn tokenize_from_str<'a:'b,'b>(input: &'a str) -> (Vec<Token<'b>>, Vec<Span>) {
     (tokens, spans)
 }
 
-pub fn parse(input: &str) -> Result<SKUI,ParseDetailError> {
+fn parse(input: &str) -> Result<SKUI, SKUIParseError> {
     let (tokens, spans) = tokenize_from_str(input);
     match parse_tokens(&tokens, &spans) {
         Ok( (styles, components) ) => Ok( SKUI{ styles, components, spans } ),
         Err(e) => {
-            Err( ParseDetailError {
+            Err( SKUIParseError {
                 span : spans[ e.span.idx() ].clone(),
                 kind : e,
             })
