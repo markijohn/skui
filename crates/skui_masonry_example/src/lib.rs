@@ -1,7 +1,9 @@
 use masonry::core::{AsDynWidget, NewWidget, NoAction, Widget, WidgetPod};
-use masonry::widgets::{Button, Checkbox, Flex, Grid, IndexedStack, Label, Passthrough, Prose, ResizeObserver, SizedBox};
+use masonry::layout::Length;
+use masonry::TextAlign;
+use masonry::widgets::{Button, Checkbox, Flex, Grid, IndexedStack, Label, Passthrough, Portal, ProgressBar, Prose, ResizeObserver, SizedBox, Slider, Spinner, Split, TextArea, TextInput, VariableLabel};
 use masonry_winit::app::{AppDriver, NewWindow};
-use skui::{Component, ParseError, SKUIParseError, SKUI};
+use skui::{Component, Parameters, ParseError, SKUIParseError, SKUI};
 mod editor;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -11,6 +13,8 @@ pub enum Error {
     RootComponentNotFound,
     UnknownComponent(String),
     RequiredChildren(usize),
+    AtLeastOneRequired,
+    ExactlyTwoChildRequired,
     ParseError(SKUIParseError)
 }
 
@@ -26,19 +30,33 @@ fn get_main_component(skui:&SKUI) -> Result<&Component> {
     none_id_comp.or(main_id_comp).ok_or_else(|| Error::RootComponentNotFound)
 }
 
-pub fn build_root_widget<'a>(src:&'a str) -> Result<NewWidget<impl Widget + ?Sized>> {
-    let skui = SKUI::parse(src)?;
-    let main_comp = get_main_component(&skui)?;
-    get_main_component( &skui )
-        .and_then( |main_comp| build_widget_recurr(&main_comp) )
+pub fn build_root_widget(src:&str) -> Result<NewWidget<impl Widget + ?Sized >> {
+    let skui = SKUI::parse( src )?;
+    let main_comp = get_main_component( &skui )?;
+    let widget = build_widget_recurr(&main_comp, None);
+    skui.components.len();
+    widget
 }
 
-fn build_widget_recurr(comp:&Component) -> Result<NewWidget<impl Widget + ?Sized>> {
+fn build_widget_recurr(comp:&Component, params:Option<&Parameters>) -> Result<NewWidget<impl Widget + ?Sized + use<>>> {
     let v = match comp.name.as_str() {
         "Flex" => {
             let mut flex = Flex::row();
 
             //Consume children
+            for c in comp.children.iter() {
+                match c.name.as_str() {
+                    "item" => {
+                        //let (weight, comp) = comp.get();
+                        let weight = 0.;
+                        let item_comp = Label::new("ITEM");
+                        flex = flex.with( NewWidget::new(item_comp).erased(), weight );
+                    }
+                    other @ _ => {
+                        flex = flex.with_fixed( build_widget_recurr(c, None)? );
+                    }
+                }
+            }
 
             NewWidget::new(flex).erased()
         }
@@ -49,10 +67,6 @@ fn build_widget_recurr(comp:&Component) -> Result<NewWidget<impl Widget + ?Sized
             NewWidget::new(btn).erased()
         }
         "Canvas" => {
-            todo!()
-        }
-        "SizedBox" => {
-
             todo!()
         }
         "CheckBox" => {
@@ -103,10 +117,14 @@ fn build_widget_recurr(comp:&Component) -> Result<NewWidget<impl Widget + ?Sized
             NewWidget::new(passthrough).erased()
         }
         "Portal" => {
-            todo!()
+            let single_child = NewWidget::new(Label::new(""));
+            let portal = Portal::new( single_child );
+            NewWidget::new(portal).erased()
         }
         "ProgressBar" => {
-            todo!()
+            let progress = None;
+            let progress_bar = ProgressBar::new( progress );
+            NewWidget::new(progress_bar).erased()
         }
         "Prose" => {
             //let label_text:&str = comp.get_bool( 1.or("checked") ).unwrap_or( false );
@@ -122,6 +140,62 @@ fn build_widget_recurr(comp:&Component) -> Result<NewWidget<impl Widget + ?Sized
             //check one child
             let resize_observer = ResizeObserver::new( NewWidget::new(Label::new("")) );
             NewWidget::new(resize_observer).erased()
+        }
+        "SizedBox" => {
+            let sized_box = SizedBox::new( NewWidget::new(Label::new("")) );
+            //size
+            NewWidget::new(sized_box).erased()
+        }
+        "Slider" => {
+            let min = 0.;
+            let max = 1.;
+            let value = 0.;
+            let step = 0.1;
+            let slider = Slider::new(min,max,value);
+            NewWidget::new(slider).erased()
+        }
+        "Spinner" => {
+            NewWidget::new(Spinner::new( )).erased()
+        }
+        "Split" => {
+            if comp.children.len() != 2 {
+                return Err(Error::ExactlyTwoChildRequired)
+            }
+            let split = Split::new(
+                build_widget_recurr(&comp.children[0], None)?,
+                build_widget_recurr(&comp.children[1], None)?
+            );
+            NewWidget::new(split).erased()
+        }
+        "TextArea" => {
+            let text = "";
+            let editable = false;
+            if editable {
+                let mut text_area = TextArea::<true>::new(text);
+                //text_area = text_area.with_word_wrap( false );
+                //text_area = text_area.with_text_alignment( TextAlign:: );
+                //text_area = text_area.set_hint( false );
+                //text_area = text_area.with_insert_newline( InsertNewLine:: );
+                NewWidget::new(text_area).erased()
+            } else {
+                let text_area = TextArea::<false>::new(text);
+                NewWidget::new(text_area).erased()
+            }
+        }
+        "TextInput" => {
+            let clip = true;
+            let text_align = TextAlign::Start;
+            let place_holder = "";
+            let mut text_input = TextInput::new("");
+            text_input = text_input.with_placeholder(place_holder);
+            text_input = text_input.with_clip(clip);
+            text_input = text_input.with_text_alignment(text_align);
+            NewWidget::new(text_input).erased()
+        }
+        "VariableLabel" => {
+            let text = "";
+            let var_label = VariableLabel::new(text);
+            NewWidget::new(var_label).erased()
         }
         name @ _ => {
             //check custom components

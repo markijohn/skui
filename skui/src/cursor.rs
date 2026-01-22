@@ -30,7 +30,7 @@ macro_rules! take_match {
     }};
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct CursorSpan {
     idx: usize
 }

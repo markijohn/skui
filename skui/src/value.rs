@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 use crate::Component;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +30,43 @@ impl Number {
     }
 }
 
+pub enum InvalidValueKey {
+    Empty,
+    Invalid(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueKey {
+    Index(usize),
+    Name(String),
+}
+
+impl FromStr for ValueKey {
+    type Err = InvalidValueKey;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(i) = usize::from_str(s) {
+            Ok(Self::Index(i))
+        } else {
+            if s.len() <= 0 {
+                Err(InvalidValueKey::Empty)
+            } else {
+                let mut bytes = s.bytes();
+                let first = bytes.next().unwrap();
+                if !first.is_ascii_alphabetic() && first == b'_' {
+                    Err(InvalidValueKey::Invalid(s.to_string()))
+                } else {
+                    if bytes.all( |c| c.is_ascii_alphanumeric() || c == b'_' ) {
+                        Ok(Self::Name(s.to_string()))
+                    } else {
+                        Err(InvalidValueKey::Invalid(s.to_string()))
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -40,6 +78,7 @@ pub enum Value {
     Map(HashMap<String, Value>),
     Closure(String),
     Component(Component),
+    Relative(Vec<ValueKey>)
 }
 
 
@@ -86,6 +125,7 @@ impl Value {
 
     pub fn as_str(&self) -> Option<&str> {
         match self {
+            Value::Ident(s) => Some(s),
             Value::String(s) => Some(s),
             _ => None,
         }
@@ -131,5 +171,49 @@ impl Value {
             Value::Number(n) => n.as_f64(),
             _ => None,
         }
+    }
+}
+
+
+pub enum ValueError {
+    NotNumber,
+    NotString
+}
+
+macro_rules! impl_num {
+    ( $($typ:ty),* ) => {
+        $(
+        impl TryFrom<&Value> for $typ {
+            type Error = ValueError;
+            fn try_from(value: &Value) -> Result<Self, Self::Error> {
+                value.as_i64().map(|v| v as $typ).ok_or(ValueError::NotNumber)
+            }
+        }
+        )*
+    }
+}
+
+impl_num!( u8, u16, u32, u64, usize, i8, i16, i32, i64, isize );
+
+macro_rules! impl_float {
+    ( $($typ:ty),* ) => {
+        $(
+        impl TryFrom<&Value> for $typ {
+            type Error = ValueError;
+            fn try_from(value: &Value) -> Result<Self, Self::Error> {
+                value.as_f64().map(|v| v as $typ).ok_or(ValueError::NotNumber)
+            }
+        }
+        )*
+    }
+}
+
+impl_float!( f32, f64 );
+
+impl <'a> TryFrom<&'a Value> for &'a str {
+    type Error = ValueError;
+
+    fn try_from(value: &'a Value) -> Result<Self, Self::Error> {
+        value.as_str().ok_or(ValueError::NotString)
     }
 }

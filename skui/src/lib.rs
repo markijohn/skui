@@ -1,5 +1,6 @@
 mod token;
 mod value;
+mod params;
 mod cursor;
 
 use token::Token;
@@ -11,6 +12,7 @@ use thiserror::Error;
 use crate::cursor::{CursorSpan, SplitCursor};
 
 pub use value::*;
+pub use params::*;
 
 pub type Cursor<'a> = TokenCursor<'a,Token<'a>>;
 
@@ -18,7 +20,7 @@ pub type Result<T,E=ParseError> = std::result::Result<T, E>;
 
 pub type CursorResult<'a, T> = std::result::Result<(Cursor<'a>,T), ParseError>;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct ParseError {
     span: CursorSpan,
     kind: ParseErrorKind,
@@ -161,11 +163,7 @@ pub struct Style {
     pub properties: Vec<StyleProperty>,
 }
 
-#[derive(Debug, Clone)]
-pub enum Parameters {
-    Map(HashMap<String,Value>),
-    Args(Vec<Value>),
-}
+
 
 #[derive(Debug, Clone)]
 pub struct Component {
