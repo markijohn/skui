@@ -1,4 +1,4 @@
-# DSL Syntax Guide
+# SKUI DSL Syntax Guide
 
 This document describes a simple DSL for defining **UI components** and **styles**.
 The language is designed to be easy to read, easy to parse, and familiar to users with CSS or UI frameworks.
@@ -39,6 +39,7 @@ Ident(arg1, arg2, ...)
 - Values inside `()` are treated as constructor arguments.
 - Arguments are separated by commas.
 - Arguments are optional.
+- But parantheses are required.
 
 Examples:
 
@@ -61,6 +62,7 @@ Rules:
 - `#id`
     - Defines a **component ID**
     - Only **one** ID is allowed
+    - 오직 Root 컴퍼넌트내의 자식 컴퍼넌트에게만 부여될 수 있습니다
 - `.class`
     - Defines a **component class**
     - Multiple classes are allowed
@@ -85,6 +87,7 @@ Inside the component body, you can place:
 #### Properties
 
 Properties are defined using the `key: value` syntax.
+이 속성들은 주로 모든 컴퍼넌트들의 공통된 특성을 다룹니다. 하지만 모두가 반드시 공통이지는 않습니다.
 
 Examples:
 
@@ -101,7 +104,8 @@ Child components can be nested directly inside the body.
 Examples:
 
 Button("OK")  
-Label("Hello")
+Label("Hello")  
+Flex() { ... }  
 
 ---
 
@@ -156,6 +160,7 @@ pub enum Value {
     Map(HashMap<String, Value>),
     Closure(String),
     Component(Component),
+    Relative(Vec<ValueKey>),
 }
 ```
 ---
@@ -192,12 +197,49 @@ options: { key1: 1, key2: false }
 
 ---
 
-## Notes
+### 4. Rules
+#### 4.1 Id 가 없는 컴퍼넌트는 Root 컨퍼넌트로 간주하며 하나만 존재하여야 합니다.
+#### 4.2 Id 는 Root 컴퍼넌트의 자식들에게만 부여할 수 있습니다. 커스텀 컴퍼넌트에 붙일 수 없습니다.
+#### 4.3 컴퍼넌트의 파라미터는 배열과 맵을 혼합할 수 없습니다.
 
+## Notes
 - Component blocks `{ }` and map values `{ }` are **context-sensitive** and distinguished by their position in the syntax.
 - The DSL favors **readability and predictable parsing** over full CSS compatibility.
+- 컴퍼넌트 파라미터와 프로퍼티는 무엇이 다릅니까? 파라미터는 컴퍼넌트들의 특성을 다루며 프로퍼티는 컴퍼넌트의 공통된 특성을 다룹니다.
 
 ---
 
-## Design Goals
-- Simple and simple
+## Error examples
+- Case.1
+```
+CustomWidget() #hello .white_back {
+	Flex( ${0}, ${1} ) {
+		item( 0, Label( ${key} ) )
+		item( 1, Button("OK") )
+	}
+}
+
+Flex {
+	CustomWidget( Row, Start, key="Hello" )
+	Button("OK")
+}
+```
+- 여기에는 2가지 문제가 존재합니다. 
+  - 먼저 커스텀 컴퍼넌트는 아이디를 가질 수 없습니다.
+  - Customized component can't have ID
+    - Fix
+      ```
+      CustomWidget() .white_back {
+      ...
+    
+      Flex {
+          CustomWidget( Row, Start, "Hello" ) #hello
+          Button("OK")
+      }
+      ```
+  - 파라미터는 배열과 키방식을 혼합할 수 없습니다
+    - {0} and {1} is index parameter but {key} is map parameter.
+    - Fix 
+      ```
+      item( 0, Label( ${2} ) )
+      ```

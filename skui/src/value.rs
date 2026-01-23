@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::str::FromStr;
-use crate::Component;
+use crate::{Component, Parameters};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Number {
@@ -171,6 +171,25 @@ impl Value {
             Value::Number(n) => n.as_f64(),
             _ => None,
         }
+    }
+
+    pub fn get_as_rk(&self, key: &[ValueKey]) -> Option<&Value> {
+        if key.len() == 0 { return None }
+        let first = &key[0];
+        let find = match first {
+            ValueKey::Index(idx) => {
+                if let Value::Array(list) = self {
+                    list.get(*idx)
+                } else { None }
+            }
+            ValueKey::Name(name) => {
+                if let Value::Map(map) = self {
+                    map.get(name)
+                } else { None }
+            }
+            _ => None
+        };
+        if key.len() == 1 { find } else { find.and_then(|v| v.get_as_rk(&key[1..])) }
     }
 }
 

@@ -1,10 +1,13 @@
-use masonry::core::{AsDynWidget, NewWidget, NoAction, Widget, WidgetPod};
-use masonry::layout::Length;
+use masonry::core::{NewWidget, Widget};
+use masonry::layout::{Length, UnitPoint};
 use masonry::TextAlign;
-use masonry::widgets::{Button, Checkbox, Flex, Grid, IndexedStack, Label, Passthrough, Portal, ProgressBar, Prose, ResizeObserver, SizedBox, Slider, Spinner, Split, TextArea, TextInput, VariableLabel};
-use masonry_winit::app::{AppDriver, NewWindow};
-use skui::{Component, Parameters, ParseError, SKUIParseError, SKUI};
+use masonry::widgets::{Align, Button, Checkbox, Flex, Grid, IndexedStack, Label, Passthrough, Portal, ProgressBar, Prose, ResizeObserver, SizedBox, Slider, Spinner, Split, TextArea, TextInput, VariableLabel};
+use skui::{Component, Parameters, SKUIParseError, SKUI};
+use crate::params::{AlignArgs, ArgumentError, FromParams, ParamsStack};
+
 mod editor;
+mod params;
+
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -15,12 +18,19 @@ pub enum Error {
     RequiredChildren(usize),
     AtLeastOneRequired,
     ExactlyTwoChildRequired,
-    ParseError(SKUIParseError)
+    ParseError(SKUIParseError),
+    InvalidParameter(ArgumentError)
 }
 
 impl From<SKUIParseError> for Error {
     fn from(e:SKUIParseError) -> Self {
         Error::ParseError(e)
+    }
+}
+
+impl From<ArgumentError> for Error {
+    fn from(e:ArgumentError) -> Self {
+        Error::InvalidParameter(e)
     }
 }
 
@@ -33,32 +43,19 @@ fn get_main_component(skui:&SKUI) -> Result<&Component> {
 pub fn build_root_widget(src:&str) -> Result<NewWidget<impl Widget + ?Sized >> {
     let skui = SKUI::parse( src )?;
     let main_comp = get_main_component( &skui )?;
-    let widget = build_widget_recurr(&main_comp, None);
+    let widget = build_widget(&main_comp, None);
     skui.components.len();
     widget
 }
 
-fn build_widget_recurr(comp:&Component, params:Option<&Parameters>) -> Result<NewWidget<impl Widget + ?Sized + use<>>> {
+fn build_widget(comp:&Component, caller_params:Option<&Parameters>) -> Result<NewWidget<impl Widget + ?Sized + use<>>> {
+    let params_stack = ParamsStack::new(caller_params, &comp.params);
     let v = match comp.name.as_str() {
-        "Flex" => {
-            let mut flex = Flex::row();
-
-            //Consume children
-            for c in comp.children.iter() {
-                match c.name.as_str() {
-                    "item" => {
-                        //let (weight, comp) = comp.get();
-                        let weight = 0.;
-                        let item_comp = Label::new("ITEM");
-                        flex = flex.with( NewWidget::new(item_comp).erased(), weight );
-                    }
-                    other @ _ => {
-                        flex = flex.with_fixed( build_widget_recurr(c, None)? );
-                    }
-                }
-            }
-
-            NewWidget::new(flex).erased()
+        "Align" => {
+            let align_args = AlignArgs::from_params(&params_stack)?;
+            let child = NewWidget::new(Label::new(""));
+            let align = Align::new( align_args.unit_point, child);
+            NewWidget::new(align).erased()
         }
         "Button" => {
             //let label_text:&str = comp.get_params( 0.or("text") ).unwrap_or("Unnamed");
@@ -77,6 +74,26 @@ fn build_widget_recurr(comp:&Component, params:Option<&Parameters>) -> Result<Ne
             let label_text = "unnamed";
             let check_box = Checkbox::new( default_checked, label_text );
             NewWidget::new(check_box).erased()
+        }
+        "Flex" => {
+            let mut flex = Flex::row();
+
+            //Consume children
+            for c in comp.children.iter() {
+                match c.name.as_str() {
+                    "item" => {
+                        //let (weight, comp) = comp.get();
+                        let weight = 0.;
+                        let item_comp = Label::new("ITEM");
+                        flex = flex.with( NewWidget::new(item_comp).erased(), weight );
+                    }
+                    other @ _ => {
+                        flex = flex.with_fixed( build_widget(c, None)? );
+                    }
+                }
+            }
+
+            NewWidget::new(flex).erased()
         }
         "Grid" => {
             //let (x,y) = comp.get( 0.and(1) );
@@ -162,8 +179,8 @@ fn build_widget_recurr(comp:&Component, params:Option<&Parameters>) -> Result<Ne
                 return Err(Error::ExactlyTwoChildRequired)
             }
             let split = Split::new(
-                build_widget_recurr(&comp.children[0], None)?,
-                build_widget_recurr(&comp.children[1], None)?
+                build_widget(&comp.children[0], None)?,
+                build_widget(&comp.children[1], None)?
             );
             NewWidget::new(split).erased()
         }
