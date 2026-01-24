@@ -1,4 +1,6 @@
 [workspace]
+workspace.resolver = "3"
+
 members = [
     "skui",
     "crates/skui_masonry_example",

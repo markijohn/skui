@@ -1,15 +1,16 @@
-#![cfg_attr(not(test), windows_subsystem = "windows")]
+//#![cfg_attr(not(test), windows_subsystem = "windows")]
 
 use masonry::core::{ErasedAction, NewWidget, Properties, Widget, WidgetId, WidgetTag};
 use masonry::dpi::LogicalSize;
 use masonry::layout::Length;
 use masonry::peniko::color::AlphaColor;
-use masonry::properties::Padding;
-use masonry::properties::types::CrossAxisAlignment;
 use masonry::theme::default_property_set;
 use masonry::widgets::{Button, ButtonPress, Flex, Label, Portal, TextAction, TextArea, TextInput};
 use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
+
+//mod builder;
+use skui_masonry_example::build_root_widget;
 
 const TEXT_INPUT_TAG: WidgetTag<TextInput> = WidgetTag::named("text-input");
 const LIST_TAG: WidgetTag<Flex> = WidgetTag::named("list");
@@ -29,7 +30,6 @@ impl AppDriver for Driver {
         action: ErasedAction,
     ) {
         debug_assert_eq!(window_id, self.window_id, "unknown window");
-
         if action.is::<ButtonPress>() {
             let render_root = ctx.render_root(window_id);
 
@@ -54,28 +54,35 @@ impl AppDriver for Driver {
 }
 
 /// Return initial to-do-list without items.
-pub fn make_widget_tree() -> NewWidget<impl Widget> {
-    let text_input = NewWidget::new_with_tag(
-        TextInput::new("").with_placeholder("ex: 'Do the dishes', 'File my taxes', ..."),
-        TEXT_INPUT_TAG,
-    );
-    let button = NewWidget::new(Button::with_text("Add task"));
-
-    let portal = Portal::new(NewWidget::new_with_tag(
-        Flex::column().cross_axis_alignment(CrossAxisAlignment::Start),
-        LIST_TAG,
-    ))
-        .with_auto_id();
-
-    let root = Flex::column()
-        .with_fixed(NewWidget::new_with_props(
-            Flex::row().with(text_input, 1.0).with_fixed(button),
-            Properties::new().with(Padding::all(WIDGET_SPACING.get())),
-        ))
-        .with_fixed_spacer(WIDGET_SPACING)
-        .with(portal, 1.0);
-
-    NewWidget::new(root)
+pub fn make_widget_tree() -> NewWidget<impl Widget + ?Sized> {
+    // let text_input = NewWidget::new_with_tag(
+    //     TextInput::new("").with_placeholder("ex: 'Do the dishes', 'File my taxes', ..."),
+    //     TEXT_INPUT_TAG,
+    // );
+    // let button = NewWidget::new(Button::with_text("Add task"));
+    //
+    // let portal = Portal::new(NewWidget::new_with_tag(
+    //     Flex::column().cross_axis_alignment(CrossAxisAlignment::Start),
+    //     LIST_TAG,
+    // ))
+    //     .with_auto_id();
+    //
+    // let root = Flex::column()
+    //     .with_fixed(NewWidget::new_with_props(
+    //         Flex::row().with(text_input, 1.0).with_fixed(button),
+    //         Properties::new().with(Padding::all(WIDGET_SPACING.get())),
+    //     ))
+    //     .with_fixed_spacer(WIDGET_SPACING)
+    //     .with(portal, 1.0);
+    //
+    // NewWidget::new(root)
+    let src = r#"
+Flex(Vertical) {
+    Label("Hello")
+    Button("OK") Button("CANCEL")
+}
+    "#;
+    build_root_widget(src).unwrap()
 }
 
 fn main() {
@@ -88,7 +95,7 @@ fn main() {
         next_task: String::new(),
         window_id: WindowId::next(),
     };
-
+println!("1111111");
     let event_loop = masonry_winit::app::EventLoop::with_user_event()
         .build()
         .unwrap();
@@ -106,4 +113,5 @@ fn main() {
         default_property_set(),
     )
         .unwrap();
+    println!("111111122222222222");
 }

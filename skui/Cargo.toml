@@ -9,6 +9,14 @@ include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
 logos = "0.16.0"
 thiserror = "2.*"
 
+[dev-dependencies]
+criterion = "0.8.1"
+
+
 [lib]
 name = "skui"
 path = "src/lib.rs"
+
+[[bench]]
+name = "parse"
+harness = false

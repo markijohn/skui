@@ -83,6 +83,11 @@ pub enum Value {
 
 
 impl Value {
+    pub fn as_bool(&self) -> Option<bool> {
+        if let Self::Bool(b) = *self {
+            Some(b)
+        } else { None }
+    }
     pub fn is_map(&self) -> bool {
         self.as_map().is_some()
     }

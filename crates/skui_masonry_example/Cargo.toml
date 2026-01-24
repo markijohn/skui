@@ -6,17 +6,16 @@ description = "skui masonry example"
 repository = "https://github.com/markijohn/skui"
 edition = "2024"
 
+[lib]
+name = "skui_masonry_example"
+path = "src/lib.rs"
 
-[[bin]]
-name = "masonry_editor"
-path = "src/editor.rs"
-
-[[bin]]
-name = "masonry_derive"
-path = "src/derive.rs"
 
 [dependencies]
 skui = {path="../../skui"}
 masonry = { git="https://github.com/linebender/xilem.git" }
 masonry_winit = {  git="https://github.com/linebender/xilem.git" }
 thiserror = "2.*"
+egui = "0.33.3"
+eframe = "0.33.3"
+wgpu = "27.0.1"
