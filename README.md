@@ -56,7 +56,9 @@ todo!()
 
 ## DSL syntax
 - [DSL Guide](../skui/GUIDE.md)
-
+- strict mode not allowed
+  - Main component must be exist 
+  - Other component(not main) cannot have id
 
 
 ## Style

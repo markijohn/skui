@@ -41,7 +41,7 @@ impl <'a> FromValue<'a> for bool {
     }
 }
 
-impl <'a> FromValue<'a> for Value {
+impl <'a> FromValue<'a> for Value<'a> {
     fn from_value(v:&'a Value) -> Result<Self, ValueConvError> {
         Ok( v.clone() )
     }
@@ -56,7 +56,7 @@ impl <'a> FromValue<'a> for Number {
 }
 
 
-impl <'a> FromValue<'a> for &'a Component {
+impl <'a> FromValue<'a> for &'a Component<'a> {
     fn from_value(v:&'a Value) -> Result< Self, ValueConvError> {
         if let Value::Component(comp) = v {
             Ok( comp )
@@ -136,9 +136,10 @@ pub struct ArgumentError {
     pub err:ValueConvError,
 }
 
+#[derive(Debug,Clone)]
 pub struct ParamsStack<'a> {
-    caller: Option<&'a Parameters>,
-    current: &'a Parameters,
+    caller: Option<&'a Parameters<'a>>,
+    current: &'a Parameters<'a>,
 }
 
 impl<'a> ParamsStack<'a> {
@@ -153,6 +154,7 @@ pub trait FromParams<'a> : Sized {
 
 macro_rules! impl_from_params {
     ( $st:ident $(<$lt:lifetime>)? , $(MUST [ $($name:ident:$name_ty:ty),* ])? $(,)? $(OPTION [$($opt_name:ident:$opt_ty:ty),* ])? ) => {
+        #[derive(Debug,Clone)]
         pub struct $st $(<$lt>)? {
             $($(pub $name:$name_ty,)*)?
             $($(pub $opt_name:Option<$opt_ty>,)*)?
@@ -185,10 +187,24 @@ macro_rules! impl_from_params {
                         Ok( Self { $($($name,)*)? $($($opt_name,)*)? } )
                     }
                     Parameters::Map(map) => {
-                        Err( ArgumentError {
-                            err:ValueConvError::MandatoryParamMissing,
-                            idx:0, key:""
-                        } )
+                        let mut cnt = 0;
+                        $(
+                        $(
+                        let value = map.get( stringify!($name)).ok_or( ArgumentError{err:ValueConvError::MandatoryParamMissing, idx:cnt, key:stringify!($name)})?;
+                        let $name = <$name_ty as FromValue<'a>>::from_value(value).map_err(|e| e.specific(cnt, stringify!($name)))?;
+                        )*
+                        )?
+
+                        $(
+                        $(
+                        let $opt_name = if let Some(value) = map.get( stringify!($opt_name)) {
+                            Some( <$opt_ty as FromValue<'a>>::from_value(value).map_err(|e| e.specific(cnt, stringify!($opt_name)))? )
+                        } else {
+                            None
+                        };
+                        )*
+                        )?
+                        Ok( Self { $($($name,)*)? $($($opt_name,)*)? } )
                     }
                 }
             }
@@ -200,19 +216,19 @@ impl_from_params!(AlignArgs, MUST[unit_point: UnitPoint] );
 impl_from_params!(ButtonArgs, MUST[text:String]);
 impl_from_params!(CheckboxArgs, MUST[text:String], OPTION [checked:bool] );
 impl_from_params!(FlexArgs, MUST [ axis: Axis ], OPTION [ main_axis_alignment: MainAxisAlignment,cross_axis_alignment: CrossAxisAlignment ] );
-impl_from_params!(FlexItemArgs <'a>, MUST[comp:&'a Component,flex:f64], OPTION[basis:FlexBasis,alignment:CrossAxisAlignment] );
+impl_from_params!(FlexItemArgs <'a>, MUST[comp:&'a Component<'a>,flex:f64], OPTION[basis:FlexBasis,alignment:CrossAxisAlignment] );
 impl_from_params!(FlexSpacerArgs, MUST[value:Number]);
 impl_from_params!(GridArgs, MUST[x:i32, y:i32] );
-impl_from_params!(GridParamsArgs<'a>, MUST[comp:&'a Component, x:i32, y:i32], OPTION[w:i32, h:i32] );
+impl_from_params!(GridParamsArgs<'a>, MUST[comp:&'a Component<'a>, x:i32, y:i32], OPTION[w:i32, h:i32] );
 impl_from_params!(IndexedStackArgs, MUST[index:usize]);
 impl_from_params!(LabelArgs, MUST[text:String] );
 impl_from_params!(ProseArgs, MUST[text:String], OPTION[clip:bool] );
-impl_from_params!(PassthroughArgs<'a>, MUST[comp:&'a Component]);
-impl_from_params!(PortalArgs<'a>, MUST[comp:&'a Component]);
+impl_from_params!(PassthroughArgs<'a>, MUST[comp:&'a Component<'a>]);
+impl_from_params!(PortalArgs<'a>, MUST[comp:&'a Component<'a>]);
 impl_from_params!(ProgressBarArgs, OPTION[progress:f64]);
-impl_from_params!(ResizeObserverArgs<'a>, MUST[comp:&'a Component]);
-impl_from_params!(SizedBoxArgs<'a>, MUST[comp:&'a Component], OPTION[width:f64, height:f64]);
+impl_from_params!(ResizeObserverArgs<'a>, MUST[comp:&'a Component<'a>]);
+impl_from_params!(SizedBoxArgs<'a>, MUST[comp:&'a Component<'a>], OPTION[width:f64, height:f64]);
 impl_from_params!(SliderArgs, MUST[min:f64,max:f64,value:f64], OPTION[step:f64] );
-impl_from_params!(SplitArgs<'a>, OPTION[first:&'a Component,second:&'a Component] );
+impl_from_params!(SplitArgs<'a>, OPTION[first:&'a Component<'a>,second:&'a Component<'a>] );
 impl_from_params!(TextAreaArgs<'a>, OPTION[text:&'a str,alignment:TextAlign,insert_newline:InsertNewline,hint:bool,editable:bool]);
 impl_from_params!(TextInputArgs<'a>, OPTION[placeholder:&'a str, text:&'a str,clip:bool,alignment:TextAlign] );

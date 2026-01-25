@@ -4,21 +4,32 @@ use masonry::core::{ErasedAction, NewWidget, Properties, Widget, WidgetId, Widge
 use masonry::dpi::LogicalSize;
 use masonry::layout::Length;
 use masonry::peniko::color::AlphaColor;
+use masonry::properties::Padding;
+use masonry::properties::types::CrossAxisAlignment;
 use masonry::theme::default_property_set;
 use masonry::widgets::{Button, ButtonPress, Flex, Label, Portal, TextAction, TextArea, TextInput};
+use masonry_testing::TestHarness;
 use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
 
 //mod builder;
-use skui_masonry_example::build_root_widget;
+use skui_masonry_example::{build_main_widget, get_widget_tag};
 
-const TEXT_INPUT_TAG: WidgetTag<TextInput> = WidgetTag::named("text-input");
+const TEXT_INPUT_TAG: WidgetTag<TextInput> = WidgetTag::named("text_input");
 const LIST_TAG: WidgetTag<Flex> = WidgetTag::named("list");
 const WIDGET_SPACING: Length = Length::const_px(5.0);
 
 struct Driver {
     next_task: String,
     window_id: WindowId,
+}
+
+fn named_tag(key:&str) -> Option<&'static str> {
+    match key {
+        "text_input" => Some("text_input"),
+        "list" => Some("list"),
+        _ => None,
+    }
 }
 
 impl AppDriver for Driver {
@@ -29,15 +40,22 @@ impl AppDriver for Driver {
         _widget_id: WidgetId,
         action: ErasedAction,
     ) {
+        // let input_tag = TEXT_INPUT_TAG;
+        // let list_tag = LIST_TAG;
+        let (input_tag, list_tag) = unsafe { (
+            get_widget_tag::<TextInput>("text_input"),
+            get_widget_tag::<Flex>("list")
+        ) };
+
         debug_assert_eq!(window_id, self.window_id, "unknown window");
         if action.is::<ButtonPress>() {
             let render_root = ctx.render_root(window_id);
 
-            render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
+            render_root.edit_widget_with_tag(input_tag, |mut text_input| {
                 let mut text_area = TextInput::text_mut(&mut text_input);
                 TextArea::reset_text(&mut text_area, "");
             });
-            render_root.edit_widget_with_tag(LIST_TAG, |mut list| {
+            render_root.edit_widget_with_tag(list_tag, |mut list| {
                 let child = Label::new(self.next_task.clone()).with_auto_id();
                 Flex::add_fixed(&mut list, child);
             });
@@ -55,6 +73,7 @@ impl AppDriver for Driver {
 
 /// Return initial to-do-list without items.
 pub fn make_widget_tree() -> NewWidget<impl Widget + ?Sized> {
+    // origin source
     // let text_input = NewWidget::new_with_tag(
     //     TextInput::new("").with_placeholder("ex: 'Do the dishes', 'File my taxes', ..."),
     //     TEXT_INPUT_TAG,
@@ -76,13 +95,22 @@ pub fn make_widget_tree() -> NewWidget<impl Widget + ?Sized> {
     //     .with(portal, 1.0);
     //
     // NewWidget::new(root)
+
     let src = r#"
-Flex(Vertical) {
-    Label("Hello")
-    Button("OK") Button("CANCEL")
-}
+    Main() {
+        Flex(Vertical) {
+            Flex(Horizontal) {
+                padding : 30.0
+                Item(TextInput("ex: 'Do the dishes', 'File my taxes', ...") #text_input , 1.0 )
+                Button("Add task")
+            }
+            Spacing(1.0)
+            Flex(axis=Vertical, cross_axis_alignment=Start) #list
+        }
+    }
     "#;
-    build_root_widget(src).unwrap()
+
+    build_main_widget(src).unwrap()
 }
 
 fn main() {
@@ -95,7 +123,6 @@ fn main() {
         next_task: String::new(),
         window_id: WindowId::next(),
     };
-println!("1111111");
     let event_loop = masonry_winit::app::EventLoop::with_user_event()
         .build()
         .unwrap();
@@ -113,5 +140,4 @@ println!("1111111");
         default_property_set(),
     )
         .unwrap();
-    println!("111111122222222222");
 }

@@ -36,15 +36,39 @@ pub enum InvalidValueKey {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ValueKey {
+pub enum ValueKey<'a> {
     Index(usize),
-    Name(String),
+    Name(&'a str),
 }
+//
+// impl <'a> FromStr for ValueKey<'a> {
+//     type Err = InvalidValueKey;
+//
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         if let Ok(i) = usize::from_str(s) {
+//             Ok(Self::Index(i))
+//         } else {
+//             if s.len() <= 0 {
+//                 Err(InvalidValueKey::Empty)
+//             } else {
+//                 let mut bytes = s.bytes();
+//                 let first = bytes.next().unwrap();
+//                 if !first.is_ascii_alphabetic() && first == b'_' {
+//                     Err(InvalidValueKey::Invalid(s.to_string()))
+//                 } else {
+//                     if bytes.all( |c| c.is_ascii_alphanumeric() || c == b'_' ) {
+//                         Ok(Self::Name(s))
+//                     } else {
+//                         Err(InvalidValueKey::Invalid(s.to_string()))
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
 
-impl FromStr for ValueKey {
-    type Err = InvalidValueKey;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl <'a> ValueKey <'a> {
+    fn from_str(s: &'a str) -> Result<Self, InvalidValueKey> {
         if let Ok(i) = usize::from_str(s) {
             Ok(Self::Index(i))
         } else {
@@ -57,7 +81,7 @@ impl FromStr for ValueKey {
                     Err(InvalidValueKey::Invalid(s.to_string()))
                 } else {
                     if bytes.all( |c| c.is_ascii_alphanumeric() || c == b'_' ) {
-                        Ok(Self::Name(s.to_string()))
+                        Ok(Self::Name(s))
                     } else {
                         Err(InvalidValueKey::Invalid(s.to_string()))
                     }
@@ -69,20 +93,25 @@ impl FromStr for ValueKey {
 
 
 #[derive(Debug, Clone)]
-pub enum Value {
-    Ident(String),
+pub enum Value<'a> {
+    Ident(&'a str),
     Bool(bool),
     Number(Number),
-    String(String),
-    Array(Vec<Value>),
-    Map(HashMap<String, Value>),
-    Closure(String),
-    Component(Component),
-    Relative(Vec<ValueKey>)
+    String(&'a str),
+    Array(Vec<Value<'a>>),
+    Map(HashMap<&'a str, Value<'a>>),
+    Closure(&'a str),
+    Component(Component<'a>),
+    Relative(Vec<ValueKey<'a>>)
 }
 
+impl <'a> Default for Value<'a> {
+    fn default() -> Self {
+        Self::Bool(false)
+    }
+}
 
-impl Value {
+impl <'a> Value<'a> {
     pub fn as_bool(&self) -> Option<bool> {
         if let Self::Bool(b) = *self {
             Some(b)
@@ -92,14 +121,14 @@ impl Value {
         self.as_map().is_some()
     }
 
-    pub fn as_map(&self) -> Option<&HashMap<String, Value>> {
+    pub fn as_map(&self) -> Option<&HashMap<&'a str, Value>> {
         match self {
             Value::Map(map) => Some(map),
             _ => None,
         }
     }
 
-    pub fn as_object_mut(&mut self) -> Option<&mut HashMap<String, Value>> {
+    pub fn as_object_mut(&mut self) -> Option<&'a mut HashMap<&'a str, Value>> {
         match self {
             Value::Map(map) => Some(map),
             _ => None,
@@ -117,7 +146,7 @@ impl Value {
         }
     }
 
-    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value>> {
+    pub fn as_array_mut(&mut self) -> Option<&mut Vec<Value<'a>>> {
         match self {
             Value::Array(list) => Some(list),
             _ => None,
@@ -178,7 +207,7 @@ impl Value {
         }
     }
 
-    pub fn get_as_rk(&self, key: &[ValueKey]) -> Option<&Value> {
+    pub fn get_as_rk(&self, key: &'a [ValueKey]) -> Option<&'a Value> {
         if key.len() == 0 { return None }
         let first = &key[0];
         let find = match first {
@@ -207,7 +236,7 @@ pub enum ValueError {
 macro_rules! impl_num {
     ( $($typ:ty),* ) => {
         $(
-        impl TryFrom<&Value> for $typ {
+        impl <'a> TryFrom<&Value<'a>> for $typ {
             type Error = ValueError;
             fn try_from(value: &Value) -> Result<Self, Self::Error> {
                 value.as_i64().map(|v| v as $typ).ok_or(ValueError::NotNumber)
@@ -222,7 +251,7 @@ impl_num!( u8, u16, u32, u64, usize, i8, i16, i32, i64, isize );
 macro_rules! impl_float {
     ( $($typ:ty),* ) => {
         $(
-        impl TryFrom<&Value> for $typ {
+        impl <'a> TryFrom<&Value<'a>> for $typ {
             type Error = ValueError;
             fn try_from(value: &Value) -> Result<Self, Self::Error> {
                 value.as_f64().map(|v| v as $typ).ok_or(ValueError::NotNumber)
@@ -234,7 +263,7 @@ macro_rules! impl_float {
 
 impl_float!( f32, f64 );
 
-impl <'a> TryFrom<&'a Value> for &'a str {
+impl <'a> TryFrom<&'a Value<'a>> for &'a str {
     type Error = ValueError;
 
     fn try_from(value: &'a Value) -> Result<Self, Self::Error> {

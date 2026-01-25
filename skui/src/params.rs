@@ -1,14 +1,16 @@
 use std::collections::HashMap;
+use tinyvec::ArrayVec;
 use crate::{Value, ValueKey};
 
 #[derive(Debug, Clone)]
-pub enum Parameters {
-    Map(HashMap<String,Value>),
-    Args(Vec<Value>),
+pub enum Parameters<'a> {
+    Map(HashMap<&'a str,Value<'a>>),
+    //Args(ArrayVec<[Value<'a>;7]>),
+    Args(Vec<Value<'a>>),
 }
 
-impl Parameters {
-    pub fn get_as_rk(&self, key: &[ValueKey]) -> Option<&Value> {
+impl <'a> Parameters<'a> {
+    pub fn get_as_rk(&self, key: &'a [ValueKey]) -> Option<&Value> {
         if key.len() == 0 { return None }
         let first = &key[0];
         let find = match first {

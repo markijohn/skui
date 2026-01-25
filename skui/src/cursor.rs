@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use tinyvec::ArrayVec;
 
 // 패턴에 매치되면 인자의 take 되고 인자의 cursor 가 새로운 커서로 대치됨
 // 매치되지 않으면 cursor 에 변화 없음
@@ -148,6 +149,22 @@ impl <'a,T> TokenCursor<'a,T> where T: Debug + Clone + Copy + PartialEq + Defaul
         check: impl Fn(Self) -> Result<(Self,Option<R>),E>,
     ) -> Result<(Self,Vec<R>),E> {
         let mut rv = Vec::new();
+        let mut ct = self;
+        while !ct.is_eof() {
+            match check(ct) {
+                Ok( (c,Some(t)) ) => { ct = c;rv.push(t) },
+                Ok( (c, None) ) => { ct = c; break },
+                Err(e) => return Err(e),
+            }
+        }
+        Ok( (ct,rv) )
+    }
+
+    pub fn consume_collect_until_arrayvec<const SIZE:usize,R:Default,E>(
+        self,
+        check: impl Fn(Self) -> Result<(Self,Option<R>),E>,
+    ) -> Result<(Self,ArrayVec<[R;SIZE]>),E> {
+        let mut rv = ArrayVec::<[R;SIZE]>::default();
         let mut ct = self;
         while !ct.is_eof() {
             match check(ct) {

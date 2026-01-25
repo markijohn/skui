@@ -1,8 +1,18 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use skui::SKUI;
+use logos::Span;
+use skui::{parse_tokens, tokenize_from_str, TokensAndSpan, SKUI};
 
-fn parse(src: &str) -> SKUI {
-    SKUI::parse(src).unwrap()
+// fn parse(src: &str) -> SKUI {
+//     SKUI::parse(src).unwrap()
+// }
+
+fn parse(src:&str) -> bool {
+    let tks = TokensAndSpan::new( src );
+    SKUI::parse(&tks).is_ok()
+}
+
+fn parse_tks( tks:&TokensAndSpan ) -> bool {
+    SKUI::parse(&tks).is_ok()
 }
 
 fn bench_parse(c: &mut Criterion) {
