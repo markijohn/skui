@@ -2,6 +2,7 @@ mod token;
 mod value;
 mod params;
 mod cursor;
+// mod selector;
 
 use token::Token;
 use cursor::TokenCursor;
@@ -14,6 +15,7 @@ use crate::cursor::{CursorSpan, SplitCursor};
 
 pub use value::*;
 pub use params::*;
+// pub use selector::*;
 
 pub type Cursor<'a> = TokenCursor<'a,Token<'a>>;
 
@@ -159,8 +161,10 @@ pub enum Selector<'a> {
     Tag(&'a str),
 }
 
-impl <'a> Default for Selector<'a> {
-    fn default() -> Self { Selector::Id("") }
+impl Default for Selector<'_> {
+    fn default() -> Self {
+        Self::Id("")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +204,22 @@ pub struct SKUI<'a> {
 impl <'a> SKUI <'a> {
     pub fn parse( tks: &'a TokensAndSpan) -> Result<Self, SKUIParseError> {
         parse(tks).map_err(|e| SKUIParseError { span: e.span, kind: e.kind })
+    }
+
+    // pub fn styles(&self, comp:&Component) -> impl Iterator<Item=&Style> {
+    //     self.styles.iter().filter(|style| {
+    //         style.selector.
+    //     })
+    // }
+
+    pub fn get_lookup_scoped_component(&self, c:&'a Component, targets:&[&str]) -> &Component<'a> {
+        let item_wrap = self.components.iter()
+            .find(|rc|
+                rc.name == c.name
+                    && targets.iter().find( |&&s| s == rc.name ).is_some()
+                    && rc.children.len() == 1
+                    && rc.children[0].name == "Item").map( |rc| &rc.children[0]);
+        item_wrap.unwrap_or( c )
     }
 }
 

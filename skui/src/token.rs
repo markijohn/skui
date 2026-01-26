@@ -105,6 +105,12 @@ pub enum Token<'a> {
     #[token("]")]
     RBracket,
 
+    #[token("<")]
+    Lt,
+
+    #[token(">")]
+    Gt,
+
     #[token("=")]
     Equal,
 

@@ -293,10 +293,10 @@ fn build_calc() -> NewWidget<impl Widget + ?Sized> {
     #digit_button { background-color:lightgray; }
     #digit_button { background-color:gray; }
 
-    OpButton() { FlexItem(Button(${0}), ${0}, ${1}, 1, 1) }
-    DigitButton() { FlexItem(Button(${0}), ${0}, ${1}, 1, 1) }
+    OpButton : FlexItem(Button(${0}), ${0}, ${1}, 1, 1) )
+    DigitButton : FlexItem(Button(${0}), ${0}, ${1}, 1, 1) )
 
-    Main() {
+    Main :
         Grid(4,6) {
             OpButton("c", 0,1)
             OpButton("C", 1,1)
@@ -323,7 +323,7 @@ fn build_calc() -> NewWidget<impl Widget + ?Sized> {
             OpButton(".", 2.5)
             OpButton("=", 3.5)
         }
-    }
+
     "#;
 
     match build_main_widget(src) {

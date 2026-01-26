@@ -8,6 +8,7 @@ use masonry::widgets::{Align, Button, Canvas, Checkbox, Flex, FlexParams, Grid, 
 use skui::{Component, Number, Parameters, SKUIParseError, TokensAndSpan, Value, SKUI};
 use crate::params::{AlignArgs, ArgumentError, ButtonArgs, CheckboxArgs, FlexArgs, FlexItemArgs, FlexSpacerArgs, FromParams, GridArgs, GridParamsArgs, IndexedStackArgs, LabelArgs, ParamsStack, PassthroughArgs, PortalArgs, ProgressBarArgs, ProseArgs, ResizeObserverArgs, SizedBoxArgs, SliderArgs, SplitArgs, TextAreaArgs, TextInputArgs};
 use std::str::FromStr;
+use crate::WidgetBuilder;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -63,7 +64,7 @@ pub fn build_main_widget(src:&str) -> Result<NewWidget<impl Widget + ?Sized >> {
     let tks = TokensAndSpan::new( src );
     let skui = SKUI::parse( &tks )?;
     let main_comp = get_main_component( &skui )?;
-    let widget = build_widget(&main_comp, &skui.components, None);
+    let widget = build_widget(&main_comp, &skui, None);
     widget
 }
 
@@ -84,8 +85,8 @@ macro_rules! wrap_new {
     } }
 }
 
-fn get_lookup_scoped_component<'a>(c:&'a Component, root_comps:&'a [Component], targets:&[&str]) -> &'a Component<'a> {
-    let item_wrap = root_comps.iter()
+pub fn get_lookup_scoped_component<'a>(c:&'a Component, skui:&'a [Component], targets:&[&str]) -> &'a Component<'a> {
+    let item_wrap = skui.iter()
         .find(|rc|
             rc.name == c.name
             && targets.iter().find( |&&s| s == rc.name ).is_some()
@@ -105,20 +106,22 @@ fn build_properties<'a>(c:&'a Component) -> Properties {
     
 }
 
-fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params:Option<&'a Parameters>) -> Result<NewWidget<impl Widget + ?Sized + use<>>> {
+pub fn build_widget<'a>(comp:&'a Component, skui:&'a SKUI,caller_params:Option<&'a Parameters>) -> Result<NewWidget<impl Widget + ?Sized + use<>>> {
     let params_stack = ParamsStack::new(caller_params, &comp.params);
     let mut props = build_properties(comp);
-    let v = match comp.name {
+    match comp.name {
         "Align" => {
-            let align_args = AlignArgs::from_params(&params_stack)?;
-            let child = NewWidget::new(Label::new(""));
-            let align = Align::new( align_args.unit_point, child);
-            wrap_new!(props, comp, align )
+            // let align_args = AlignArgs::from_params(&params_stack)?;
+            // let child = NewWidget::new(Label::new(""));
+            // let align = Align::new( align_args.unit_point, child);
+            // wrap_new!(props, comp, align )
+            Align::build_widget::<Align>(caller_params, comp, skui)
         }
         "Button" => {
-            let button_args = ButtonArgs::from_params(&params_stack)?;
-            let btn = Button::new( NewWidget::new(Label::new(button_args.text)) );
-            wrap_new!(props, comp, btn )
+            // let button_args = ButtonArgs::from_params(&params_stack)?;
+            // let btn = Button::new( NewWidget::new(Label::new(button_args.text)) );
+            // wrap_new!(props, comp, btn )
+            Button::build_widget::<Button>(caller_params, comp, skui)
         }
         "Canvas" => {
             let canvas = Canvas::default();
@@ -140,13 +143,14 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
                 if let Some(main_axis_align) = flex_args.main_axis_alignment { flex = flex.main_axis_alignment(main_axis_align);}
                 if let Some(cross_axis_align) = flex_args.cross_axis_alignment { println!("{cross_axis_align:#?}"); flex = flex.cross_axis_alignment(cross_axis_align);}
                 for mut c in comp.children.iter() {
-                    c = get_lookup_scoped_component(c, root_comps, &["FlexItem"]);
+                    //c = get_lookup_scoped_component(c, skui, &["FlexItem"]);
+                    c = skui.get_lookup_scoped_component(c, &["FlexItem"]);
 
                     match c.name {
                         "FlexItem" => {
                             let params_stack = ParamsStack::new(None, &c.params);
                             let item_args = FlexItemArgs::from_params(&params_stack)?;
-                            let item_comp = build_widget(item_args.comp, root_comps, None)?;
+                            let item_comp = build_widget(item_args.comp, skui, None)?;
                             let params = FlexParams::new(item_args.flex, item_args.basis, item_args.alignment);
                             flex = flex.with( item_comp, params );
                         }
@@ -159,7 +163,7 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
                             }
                         }
                         _ => {
-                            flex = flex.with_fixed( build_widget(c, root_comps, None)? );
+                            flex = flex.with_fixed( build_widget(c, skui, None)? );
                         }
                     }
                 }
@@ -173,13 +177,13 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
                 if let Some(main_axis_align) = flex_args.main_axis_alignment { flex = flex.main_axis_alignment(main_axis_align);}
                 if let Some(cross_axis_align) = flex_args.cross_axis_alignment { println!("{cross_axis_align:#?}"); flex = flex.cross_axis_alignment(cross_axis_align);}
                 for mut c in comp.children.iter() {
-                    c = get_lookup_scoped_component(c, root_comps, &["FlexItem"]);
+                    c = skui.get_lookup_scoped_component(c,  &["FlexItem"]);
 
                     match c.name {
                         "FlexItem" => {
                             let params_stack = ParamsStack::new(None, &c.params);
                             let item_args = FlexItemArgs::from_params(&params_stack)?;
-                            let item_comp = build_widget(item_args.comp, root_comps, None)?;
+                            let item_comp = build_widget(item_args.comp, skui, None)?;
                             let params = FlexParams::new(item_args.flex, item_args.basis, item_args.alignment);
                             flex = flex.with( item_comp, params );
                         }
@@ -192,7 +196,7 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
                             }
                         }
                         _ => {
-                            flex = flex.with_fixed( build_widget(c, root_comps, None)? );
+                            flex = flex.with_fixed( build_widget(c, skui, None)? );
                         }
                     }
                 }
@@ -207,13 +211,13 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
             //flex와 같은 상황..
             if let Some("scroll") = comp.properties.get("overflow").and_then(|v|v.as_str()) {
                 for mut c in comp.children.iter() {
-                    c = get_lookup_scoped_component(c, root_comps, &["GridItem"]);
+                    c = skui.get_lookup_scoped_component(c, &["GridItem"]);
 
                     match c.name {
                         "GridItem" => {
                             let params_stack = ParamsStack::new(None, &c.params);
                             let item_args = GridParamsArgs::from_params(&params_stack)?;
-                            let item_comp = build_widget(item_args.comp, root_comps, None)?;
+                            let item_comp = build_widget(item_args.comp, skui, None)?;
                             let params = GridParams::new(item_args.x, item_args.y, item_args.w.unwrap_or(1), item_args.h.unwrap_or(1));
                             grid = grid.with(item_comp, params);
                         }
@@ -226,13 +230,13 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
                 wrap_new!(props, comp, grid )
             } else {
                 for mut c in comp.children.iter() {
-                    c = get_lookup_scoped_component(c, root_comps, &["GridItem"]);
+                    c = skui.get_lookup_scoped_component(c,  &["GridItem"]);
 
                     match c.name {
                         "GridItem" => {
                             let params_stack = ParamsStack::new(None, &c.params);
                             let item_args = GridParamsArgs::from_params(&params_stack)?;
-                            let item_comp = build_widget(item_args.comp, root_comps, None)?;
+                            let item_comp = build_widget(item_args.comp, skui, None)?;
                             let params = GridParams::new(item_args.x, item_args.y, item_args.w.unwrap_or(1), item_args.h.unwrap_or(1));
                             grid = grid.with(item_comp, params);
                         }
@@ -258,7 +262,7 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
             for c in comp.children.iter() {
                 match c.name {
                     "Item" => {
-                        let comp = build_widget(c, root_comps, None)?;
+                        let comp = build_widget(c, skui, None)?;
                         indexed_stack = indexed_stack.with(comp);
                     }
                     _ => {
@@ -276,7 +280,7 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
         }
         "Passthrough" => {
             let passthrough_args = PassthroughArgs::from_params(&params_stack)?;
-            let passthrough = Passthrough::new( build_widget(passthrough_args.comp, root_comps, None)? );
+            let passthrough = Passthrough::new( build_widget(passthrough_args.comp, skui, None)? );
             wrap_new!(props, comp, passthrough )
         }
         "Portal" => {
@@ -299,12 +303,12 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
         "ResizeObserver" => {
             //check one child
             let args = ResizeObserverArgs::from_params(&params_stack)?;
-            let resize_observer = ResizeObserver::new( build_widget(args.comp, root_comps, None)? );
+            let resize_observer = ResizeObserver::new( build_widget(args.comp, skui, None)? );
             wrap_new!(props, comp, resize_observer )
         }
         "SizedBox" => {
             let args = SizedBoxArgs::from_params(&params_stack)?;
-            let mut sized_box = SizedBox::new( build_widget(args.comp, root_comps, None)? );
+            let mut sized_box = SizedBox::new( build_widget(args.comp, skui, None)? );
             if let Some(width) = args.width { sized_box = sized_box.width( Length::px( width ) ); }
             if let Some(height) = args.height { sized_box = sized_box.width( Length::px( height ) ); }
             wrap_new!(props, comp, sized_box )
@@ -329,8 +333,8 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
                 return Err(Error::ExactlyTwoChildRequired)
             };
             let split = Split::new(
-                build_widget(&first, root_comps, None)?,
-                build_widget(&second, root_comps, None)?
+                build_widget(&first, skui, None)?,
+                build_widget(&second, skui, None)?
             );
             wrap_new!(props, comp, split )
         }
@@ -370,8 +374,8 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
             let is_root = caller_params.is_none();
             if is_root {
                 let caller_param = Some(&comp.params);
-                if let Some(other_comp) = root_comps.iter().find(|comp| comp.name == name) {
-                    return build_widget(other_comp, root_comps, caller_param)
+                if let Some(other_comp) = skui.components.iter().find(|comp| comp.name == name) {
+                    return build_widget(other_comp, skui, caller_param)
                 } else {
                     return Err(Error::UnknownComponent(name.to_string()))
                 }
@@ -380,9 +384,8 @@ fn build_widget<'a>(comp:&'a Component, root_comps:&'a [Component],caller_params
                 if comp.children.len() != 1 {
                     return Err(Error::MultipleChildDefinitions(name.to_string()))
                 }
-                return build_widget(&comp.children[0], root_comps, None)
+                return build_widget(&comp.children[0], skui, None)
             }
         },
-    };
-    Ok(v)
+    }
 }

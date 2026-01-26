@@ -136,6 +136,7 @@ pub struct ArgumentError {
     pub err:ValueConvError,
 }
 
+// Search for the value in the current parameter. If the value is “Relative”, search in the caller parameter.
 #[derive(Debug,Clone)]
 pub struct ParamsStack<'a> {
     caller: Option<&'a Parameters<'a>>,
@@ -212,7 +213,7 @@ macro_rules! impl_from_params {
     };
 }
 
-impl_from_params!(AlignArgs, MUST[unit_point: UnitPoint] );
+impl_from_params!(AlignArgs<'a>, MUST[unit_point: UnitPoint, comp:&'a Component<'a>] );
 impl_from_params!(ButtonArgs, MUST[text:String]);
 impl_from_params!(CheckboxArgs, MUST[text:String], OPTION [checked:bool] );
 impl_from_params!(FlexArgs, MUST [ axis: Axis ], OPTION [ main_axis_alignment: MainAxisAlignment,cross_axis_alignment: CrossAxisAlignment ] );
