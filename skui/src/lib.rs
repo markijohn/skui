@@ -468,7 +468,7 @@ fn parse<'a>( tks: &'a TokensAndSpan ) -> Result<SKUI<'a>, SKUIParseError> {
 }
 
 
-fn render_error(
+pub fn render_error(
     input: &str,
     span: Span,
     context_lines: usize, // 이전 몇 줄 보여줄지

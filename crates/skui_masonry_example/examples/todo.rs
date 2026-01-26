@@ -24,14 +24,6 @@ struct Driver {
     window_id: WindowId,
 }
 
-fn named_tag(key:&str) -> Option<&'static str> {
-    match key {
-        "text_input" => Some("text_input"),
-        "list" => Some("list"),
-        _ => None,
-    }
-}
-
 impl AppDriver for Driver {
     fn on_action(
         &mut self,
@@ -101,11 +93,13 @@ pub fn make_widget_tree() -> NewWidget<impl Widget + ?Sized> {
         Flex(Vertical) {
             Flex(Horizontal) {
                 padding : 30.0
-                Item(TextInput("ex: 'Do the dishes', 'File my taxes', ...") #text_input , 1.0 )
+                FlexItem(TextInput("ex: 'Do the dishes', 'File my taxes', ...") #text_input , 1.0 )
                 Button("Add task")
             }
             Spacing(1.0)
-            Flex(axis=Vertical, cross_axis_alignment=Start) #list
+            Flex(axis=Vertical, cross_axis_alignment=Start) #list {
+                overflow: scroll
+            }
         }
     }
     "#;

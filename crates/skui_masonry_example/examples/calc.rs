@@ -4,7 +4,7 @@
 //! Simple calculator.
 
 // On Windows platform, don't show a console when opening the app.
-#![cfg_attr(not(test), windows_subsystem = "windows")]
+// #![cfg_attr(not(test), windows_subsystem = "windows")]
 #![allow(
     variant_size_differences,
     clippy::single_match,
@@ -29,7 +29,7 @@ use masonry::theme::default_property_set;
 use masonry::widgets::{Button, ButtonPress, Flex, Grid, GridParams, Label};
 use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
-use skui_masonry_example::build_main_widget;
+use skui_masonry_example::{Error as SKUIMasonryError, build_main_widget, Error};
 
 #[derive(Clone)]
 struct CalcState {
@@ -236,72 +236,72 @@ fn digit_button(digit: u8) -> NewWidget<Button> {
 }
 
 /// Build the widget tree
-pub fn build_calc() -> NewWidget<impl Widget> {
-    let display = Label::new(String::new()).with_style(StyleProperty::FontSize(32.));
-    let display = Flex::column()
-        .with_spacer(1.)
-        .with_fixed(display.with_auto_id())
-        .with_spacer(1.)
-        .cross_axis_alignment(CrossAxisAlignment::End);
-
-    fn button_params(x: i32, y: i32) -> GridParams {
-        GridParams::new(x, y, 1, 1)
-    }
-
-    let root_widget = Grid::with_dimensions(4, 6)
-        .with(display.with_auto_id(), GridParams::new(0, 0, 4, 1))
-        .with(
-            op_button_with_label('c', "CE".to_string()),
-            button_params(0, 1),
-        )
-        .with(op_button('C'), button_params(1, 1))
-        .with(op_button('⌫'), button_params(2, 1))
-        .with(op_button('÷'), button_params(3, 1))
-        .with(digit_button(7), button_params(0, 2))
-        .with(digit_button(8), button_params(1, 2))
-        .with(digit_button(9), button_params(2, 2))
-        .with(op_button('×'), button_params(3, 2))
-        .with(digit_button(4), button_params(0, 3))
-        .with(digit_button(5), button_params(1, 3))
-        .with(digit_button(6), button_params(2, 3))
-        .with(op_button('−'), button_params(3, 3))
-        .with(digit_button(1), button_params(0, 4))
-        .with(digit_button(2), button_params(1, 4))
-        .with(digit_button(3), button_params(2, 4))
-        .with(op_button('+'), button_params(3, 4))
-        .with(op_button('±'), button_params(0, 5))
-        .with(digit_button(0), button_params(1, 5))
-        .with(op_button('.'), button_params(2, 5))
-        .with(op_button('='), button_params(3, 5));
-
-    NewWidget::new_with_props(
-        root_widget,
-        Properties::new()
-            .with(Background::Color(AlphaColor::from_str("#794869").unwrap()))
-            .with(Padding::all(2.0))
-            .with(Gap::new(1.px())),
-    )
-}
+// pub fn build_calc() -> NewWidget<impl Widget> {
+//     let display = Label::new(String::new()).with_style(StyleProperty::FontSize(32.));
+//     let display = Flex::column()
+//         .with_spacer(1.)
+//         .with_fixed(display.with_auto_id())
+//         .with_spacer(1.)
+//         .cross_axis_alignment(CrossAxisAlignment::End);
+//
+//     fn button_params(x: i32, y: i32) -> GridParams {
+//         GridParams::new(x, y, 1, 1)
+//     }
+//
+//     let root_widget = Grid::with_dimensions(4, 6)
+//         .with(display.with_auto_id(), GridParams::new(0, 0, 4, 1))
+//         .with(
+//             op_button_with_label('c', "CE".to_string()),
+//             button_params(0, 1),
+//         )
+//         .with(op_button('C'), button_params(1, 1))
+//         .with(op_button('⌫'), button_params(2, 1))
+//         .with(op_button('÷'), button_params(3, 1))
+//         .with(digit_button(7), button_params(0, 2))
+//         .with(digit_button(8), button_params(1, 2))
+//         .with(digit_button(9), button_params(2, 2))
+//         .with(op_button('×'), button_params(3, 2))
+//         .with(digit_button(4), button_params(0, 3))
+//         .with(digit_button(5), button_params(1, 3))
+//         .with(digit_button(6), button_params(2, 3))
+//         .with(op_button('−'), button_params(3, 3))
+//         .with(digit_button(1), button_params(0, 4))
+//         .with(digit_button(2), button_params(1, 4))
+//         .with(digit_button(3), button_params(2, 4))
+//         .with(op_button('+'), button_params(3, 4))
+//         .with(op_button('±'), button_params(0, 5))
+//         .with(digit_button(0), button_params(1, 5))
+//         .with(op_button('.'), button_params(2, 5))
+//         .with(op_button('='), button_params(3, 5));
+//
+//     NewWidget::new_with_props(
+//         root_widget,
+//         Properties::new()
+//             .with(Background::Color(AlphaColor::from_str("#794869").unwrap()))
+//             .with(Padding::all(2.0))
+//             .with(Gap::new(1.px())),
+//     )
+// }
 
 
 fn build_calc() -> NewWidget<impl Widget + ?Sized> {
     let src = r#"
     #op_button { background-color:blue; }
-    #op_button:active { background-color:lightblue; }
-    #op_button:hover { border: 2px solid white; }
+    #op_button { background-color:lightblue; }
+    #op_button { border: 2px solid white; }
     #digit_button { background-color:gray; }
-    #digit_button:active { background-color:lightgray; }
-    #digit_button:hover { background-color:gray; }
+    #digit_button { background-color:lightgray; }
+    #digit_button { background-color:gray; }
 
-    OpButton { Item(Button(${0}), ${0}, ${1}, 1, 1) }
-    DigitButton { Item(Button(${0}), ${0}, ${1}, 1, 1) }
+    OpButton() { FlexItem(Button(${0}), ${0}, ${1}, 1, 1) }
+    DigitButton() { FlexItem(Button(${0}), ${0}, ${1}, 1, 1) }
 
-    Main {
+    Main() {
         Grid(4,6) {
-            OpButton("c"), 0,1)
-            OpButton("C"), 1,1)
-            OpButton("⌫"), 2,1)
-            OpButton("÷"), 3,1)
+            OpButton("c", 0,1)
+            OpButton("C", 1,1)
+            OpButton("⌫", 2,1)
+            OpButton("÷", 3,1)
 
             DigitButton("7", 0,2)
             DigitButton("8", 1,2)
@@ -318,15 +318,23 @@ fn build_calc() -> NewWidget<impl Widget + ?Sized> {
             DigitButton("3", 2,4)
             OpButton("+", 3,4)
 
-            OpButton("±", 0.5);
+            OpButton("±", 0.5)
             DigitButton("0", 1,5)
-            OpButton(".", 2.5);
-            OpButton("=", 3.5);
+            OpButton(".", 2.5)
+            OpButton("=", 3.5)
         }
     }
     "#;
 
-    build_main_widget(src).unwrap()
+    match build_main_widget(src) {
+        Ok(v) => v,
+        Err(e) => {
+            match e {
+                Error::ParseError(s) => panic!("{s:?} :\n{}", skui::render_error(src, s.span.clone(), 3)),
+                e @ _ => panic!("{:?}", e),
+            }
+        }
+    }
 }
 
 fn main() {
