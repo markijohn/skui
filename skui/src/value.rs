@@ -28,8 +28,23 @@ impl Number {
             Some(i)
         } else { None }
     }
+
+    pub fn force_i64(&self) -> i64 {
+        match self {
+            Number::I64(v) => *v,
+            Number::F64(v) => *v as i64
+        }
+    }
+
+    pub fn force_f64(&self) -> f64 {
+        match self {
+            Number::I64(v) => *v as f64,
+            Number::F64(v) => *v
+        }
+    }
 }
 
+#[derive(Debug, Clone)]
 pub enum InvalidValueKey {
     Empty,
     Invalid(String),
@@ -40,35 +55,9 @@ pub enum ValueKey<'a> {
     Index(usize),
     Name(&'a str),
 }
-//
-// impl <'a> FromStr for ValueKey<'a> {
-//     type Err = InvalidValueKey;
-//
-//     fn from_str(s: &str) -> Result<Self, Self::Err> {
-//         if let Ok(i) = usize::from_str(s) {
-//             Ok(Self::Index(i))
-//         } else {
-//             if s.len() <= 0 {
-//                 Err(InvalidValueKey::Empty)
-//             } else {
-//                 let mut bytes = s.bytes();
-//                 let first = bytes.next().unwrap();
-//                 if !first.is_ascii_alphabetic() && first == b'_' {
-//                     Err(InvalidValueKey::Invalid(s.to_string()))
-//                 } else {
-//                     if bytes.all( |c| c.is_ascii_alphanumeric() || c == b'_' ) {
-//                         Ok(Self::Name(s))
-//                     } else {
-//                         Err(InvalidValueKey::Invalid(s.to_string()))
-//                     }
-//                 }
-//             }
-//         }
-//     }
-// }
 
 impl <'a> ValueKey <'a> {
-    fn from_str(s: &'a str) -> Result<Self, InvalidValueKey> {
+    pub fn from_str(s: &'a str) -> Result<Self, InvalidValueKey> {
         if let Ok(i) = usize::from_str(s) {
             Ok(Self::Index(i))
         } else {
@@ -88,6 +77,10 @@ impl <'a> ValueKey <'a> {
                 }
             }
         }
+    }
+
+    pub fn vec_from_str(s: &'a str) -> Result<Vec<Self>, InvalidValueKey> {
+        s.split('.').map( Self::from_str ).collect()
     }
 }
 
@@ -195,14 +188,14 @@ impl <'a> Value<'a> {
 
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            Value::Number(n) => n.as_i64(),
+            Value::Number(n) => Some(n.force_i64()),
             _ => None,
         }
     }
 
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            Value::Number(n) => n.as_f64(),
+            Value::Number(n) => Some(n.force_f64()),
             _ => None,
         }
     }

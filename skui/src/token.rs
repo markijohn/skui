@@ -1,5 +1,5 @@
 use logos::Logos;
-
+use crate::ValueKey;
 
 fn parse_rgb(s: &str) -> Option<(u8, u8, u8)> {
     let inner = s.trim_start_matches("rgb(").trim_end_matches(')');
@@ -77,6 +77,9 @@ pub enum Token<'a> {
 
     #[token("false")]
     False,
+
+    #[regex(r"\$\{([^}]+)\}", |lex| &lex.slice()[2..lex.slice().len()-1] )]
+    Relative( &'a str ),
 
     #[token("{")]
     LBrace,

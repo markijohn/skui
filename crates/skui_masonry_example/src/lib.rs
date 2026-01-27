@@ -10,8 +10,7 @@ use masonry::widgets::{Align, Button, Canvas, Checkbox, Flex, FlexParams, Grid, 
 use skui::{Component, Number, Parameters, SKUIParseError, TokensAndSpan, SKUI};
 use crate::params::{AlignArgs, ArgumentError, ButtonArgs, CheckboxArgs, FlexArgs, FlexItemArgs, FlexSpacerArgs, FromParams, GridArgs, GridParamsArgs, IndexedStackArgs, LabelArgs, ParamsStack, PassthroughArgs, PortalArgs, ProgressBarArgs, ProseArgs, ResizeObserverArgs, SizedBoxArgs, SliderArgs, SplitArgs, TextAreaArgs, TextInputArgs, VariableLabelArgs};
 use std::str::FromStr;
-
-
+use masonry::parley::{Brush, StyleProperty};
 
 #[derive(Debug,Clone)]
 pub enum Error {
@@ -41,18 +40,7 @@ impl From<ArgumentError> for Error {
 static WID_TABLE: std::sync::LazyLock<std::sync::RwLock<HashMap<String, &'static str>>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()) );
 
-unsafe fn get_widget_id(map_id: &str) -> &'static str {
-    if let Some(&id) = WID_TABLE.read().unwrap().get(map_id) {
-        return id;
-    }
-    let leaked: &'static str = Box::leak(map_id.to_string().into_boxed_str());
-    WID_TABLE.write().unwrap().insert(map_id.to_string(), leaked);
-    leaked
-}
 
-pub unsafe fn get_widget_tag<W:Widget>(map_id: &str) -> WidgetTag<W> {
-    unsafe { WidgetTag::<W>::named( get_widget_id(map_id) ) }
-}
 
 
 macro_rules! impl_default_widget_builder {
@@ -78,6 +66,19 @@ impl_default_widget_builder!(DefaultWidgetBuilder {Align,Button,Canvas,Checkbox,
 
 
 pub trait RootWidgetBuilder {
+    unsafe fn get_widget_id(map_id: &str) -> &'static str {
+        if let Some(&id) = WID_TABLE.read().unwrap().get(map_id) {
+            return id;
+        }
+        let leaked: &'static str = Box::leak(map_id.to_string().into_boxed_str());
+        WID_TABLE.write().unwrap().insert(map_id.to_string(), leaked);
+        leaked
+    }
+
+    unsafe fn get_widget_tag<W:Widget>(map_id: &str) -> WidgetTag<W> {
+        unsafe { WidgetTag::<W>::named( Self::get_widget_id(map_id) ) }
+    }
+
     fn build_widget<'a>(params_stack:&ParamsStack<'a>) -> Result<NewWidget<impl Widget + ?Sized>, Error>;
 
     fn build_properties<'a>(c:&Component<'a>) -> Properties {
@@ -89,6 +90,12 @@ pub trait RootWidgetBuilder {
         }
         props
     }
+
+    fn build_text_style<'a,'b,B:Brush>(c:&Component<'a>) -> Option<StyleProperty<'b,B>>  {
+        if let Some(v) = c.properties.get("font_size").and_then(|v| v.as_f64()) {
+            Some( StyleProperty::FontSize(v as _) )
+        } else { None }
+    }
 }
 
 pub trait WidgetBuilder {
@@ -97,7 +104,7 @@ pub trait WidgetBuilder {
 
     fn build<'a,B:RootWidgetBuilder>(params_stack:&ParamsStack<'a>)  -> Result<NewWidget<impl Widget + ?Sized>, Error> {
         let widget = <Self as WidgetBuilder>::build_target::<B>(params_stack)?;
-        let wid = params_stack.get_id().map( |id| { unsafe { get_widget_tag(id) } } );
+        let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
         let wopts = WidgetOptions::default();
         let props = B::build_properties(&params_stack.component);
         Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
@@ -158,21 +165,18 @@ impl WidgetBuilder for Flex {
         let flex_args = FlexArgs::from_params(params_stack)?;
         let mut widget = Flex::for_axis(flex_args.axis);
         if let Some(main_axis_align) = flex_args.main_axis_alignment { widget = widget.main_axis_alignment(main_axis_align);}
-        if let Some(cross_axis_align) = flex_args.cross_axis_alignment { println!("{cross_axis_align:#?}"); widget = widget.cross_axis_alignment(cross_axis_align);}
+        if let Some(cross_axis_align) = flex_args.cross_axis_alignment { widget = widget.cross_axis_alignment(cross_axis_align);}
         for mut c in params_stack.children() {
-            //c = skui.get_lookup_scoped_component(c, &["FlexItem"]);
-
-            match c.name {
+            //c = params_stack.skui.get_lookup_scoped_component(c, &["FlexItem"]);
+            let flex_child_stack = params_stack.new_stack( c );
+            match flex_child_stack.component.name {
                 "FlexItem" => {
-                    let inner_stack = params_stack.new_stack(c);
-                    println!("Check... : ");
-                    let item_args = FlexItemArgs::from_params(&inner_stack)?;
-                    println!("Check...!! : {:?}",item_args);
-                    let item_comp = B::build_widget(&params_stack.new_stack(item_args.comp))?;
+                    let item_args = FlexItemArgs::from_params( &flex_child_stack )?;
+                    let item_comp = B::build_widget(&flex_child_stack.new_stack(item_args.comp))?;
                     let params = FlexParams::new(item_args.flex, item_args.basis, item_args.alignment);
                     widget = widget.with( item_comp, params );
                 }
-                "Spacing" => {
+                "FlexSpace" => {
                     let inner_stack = params_stack.new_stack(c);
                     let spacer_args = FlexSpacerArgs::from_params(&inner_stack)?;
                     widget = match spacer_args.value {
@@ -199,12 +203,11 @@ impl WidgetBuilder for Grid {
         let mut widget = Grid::with_dimensions( grid_args.x, grid_args.y );
 
         for mut c in params_stack.children() {
-            // c = skui.get_lookup_scoped_component(c, &["GridItem"]);
-
-            match c.name {
+            let grid_child_stack = params_stack.new_stack(c);
+            match grid_child_stack.component.name {
                 "GridItem" => {
-                    let item_args = GridParamsArgs::from_params(params_stack)?;
-                    let item_comp = B::build_widget(&params_stack.new_stack(item_args.comp))?;
+                    let item_args = GridParamsArgs::from_params(&grid_child_stack)?;
+                    let item_comp = B::build_widget(&grid_child_stack.new_stack(item_args.comp))?;
                     let params = GridParams::new(item_args.x, item_args.y, item_args.w.unwrap_or(1), item_args.h.unwrap_or(1));
                     widget = widget.with(item_comp, params);
                 }
@@ -254,7 +257,11 @@ impl WidgetBuilder for Label {
     type TargetWidget = Self;
     fn build_target<'a, B: RootWidgetBuilder>(params_stack: &ParamsStack<'a>) -> Result<Self::TargetWidget, Error> {
         let label_args = LabelArgs::from_params(params_stack)?;
-        let widget = Label::new(label_args.text);
+        let mut widget = Label::new(label_args.text);
+        if let Some(v) = B::build_text_style( &params_stack.component ) {
+            widget = widget.with_style( v );
+        }
+
         Ok( widget )
     }
 }
@@ -275,10 +282,9 @@ impl WidgetBuilder for Portal<Label> {
     type TargetWidget = Label; //dont care
 
     fn build<'a, B: RootWidgetBuilder>(params_stack: &ParamsStack<'a>) -> Result<NewWidget<impl Widget + ?Sized>, Error> {
-        println!("Portal build");
         let portal_args = PortalArgs::from_params(&params_stack)?;
         let widget = Portal::new( B::build_widget( &params_stack.new_stack(portal_args.comp) )?.erased() );
-        let wid = params_stack.get_id().map( |id| { unsafe { get_widget_tag(id) } } );
+        let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
         let wopts = WidgetOptions::default();
         let props = B::build_properties(&params_stack.component);
         Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
@@ -376,7 +382,7 @@ impl WidgetBuilder for Split<dyn Widget<Action=ErasedAction>,dyn Widget<Action=E
             B::build_widget( &params_stack.new_stack(first) )?.erased(),
             B::build_widget( &params_stack.new_stack(second) )?.erased()
         );
-        let wid = params_stack.get_id().map( |id| { unsafe { get_widget_tag(id) } } );
+        let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
         let wopts = WidgetOptions::default();
         let props = B::build_properties(&params_stack.component);
         Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
@@ -396,13 +402,13 @@ impl <const USER_EDITABLE:bool> WidgetBuilder for TextArea<USER_EDITABLE> {
         let args = TextAreaArgs::from_params(params_stack)?;
         if args.editable.unwrap_or(true) {
             let widget = TextArea::<true>::new(args.text.unwrap_or(""));
-            let wid = params_stack.get_id().map( |id| { unsafe { get_widget_tag(id) } } );
+            let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
             let wopts = WidgetOptions::default();
             let props = B::build_properties(&params_stack.component);
             Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
         } else {
             let widget = TextArea::<false>::new(args.text.unwrap_or(""));
-            let wid = params_stack.get_id().map( |id| { unsafe { get_widget_tag(id) } } );
+            let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
             let wopts = WidgetOptions::default();
             let props = B::build_properties(&params_stack.component);
             Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )

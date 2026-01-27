@@ -70,6 +70,10 @@ impl ParseError {
     pub fn id_already_defined(span: CursorSpan) -> Self {
         Self { span, kind:ParseErrorKind::IdAlreadyDefined }
     }
+
+    pub fn invalid_relative_value(span: CursorSpan) -> Self {
+        Self { span, kind:ParseErrorKind::InvalidRelativeValue }
+    }
 }
 
 
@@ -103,7 +107,10 @@ pub enum ParseErrorKind {
     UnknownStart,
 
     #[error("id already defined")]
-    IdAlreadyDefined
+    IdAlreadyDefined,
+
+    #[error("invalid relative value expression")]
+    InvalidRelativeValue,
 }
 
 #[derive(Default, Debug, PartialEq, Clone)]
@@ -328,6 +335,10 @@ fn parse_value(cursor:Cursor) -> CursorResult<Value> {
             Token::Float(v) => Value::Number(Number::F64(v)),
             Token::True => Value::Bool(true),
             Token::False => Value::Bool(false),
+            Token::Relative(s) => {
+                let vkeys = ValueKey::vec_from_str(s).map_err(|_| ParseError::invalid_relative_value(span))?;
+                Value::Relative( vkeys )
+            },
             _ => return Err(ParseError::expect_value(span))
         };
         (cursor, v)

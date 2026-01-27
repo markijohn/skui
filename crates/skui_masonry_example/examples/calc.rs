@@ -29,7 +29,9 @@ use masonry::theme::default_property_set;
 use masonry::widgets::{Button, ButtonPress, Flex, Grid, GridParams, Label};
 use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
-use skui_masonry_example::{Error as SKUIMasonryError, build_main_widget, Error};
+use skui::{render_error, TokensAndSpan, SKUI};
+use skui_masonry_example::{Error as SKUIMasonryError, Error, DefaultWidgetBuilder, RootWidgetBuilder};
+use skui_masonry_example::params::ParamsStack;
 
 #[derive(Clone)]
 struct CalcState {
@@ -283,7 +285,8 @@ fn digit_button(digit: u8) -> NewWidget<Button> {
 //     )
 // }
 
-
+// OpButton : GridItem(Button(${0}), ${0}, ${1}, 1, 1)
+// DigitButton : GridItem(Button(${0}), ${0}, ${1}, 1, 1)
 fn build_calc() -> NewWidget<impl Widget + ?Sized> {
     let src = r#"
     #op_button { background-color:blue; }
@@ -293,46 +296,65 @@ fn build_calc() -> NewWidget<impl Widget + ?Sized> {
     #digit_button { background-color:lightgray; }
     #digit_button { background-color:gray; }
 
-    OpButton : FlexItem(Button(${0}), ${0}, ${1}, 1, 1) )
-    DigitButton : FlexItem(Button(${0}), ${0}, ${1}, 1, 1) )
+
+    Display:
+        Flex(axis=Vertical, cross_axis_alignment=Start) {
+            FlexSpace(1.)
+            Label("11111") #display { font_size : 30 }
+        }
+
+    OpButton:
+        GridItem( Button( ${0} ), 1,1, 1,1 )
 
     Main :
         Grid(4,6) {
-            OpButton("c", 0,1)
-            OpButton("C", 1,1)
-            OpButton("⌫", 2,1)
-            OpButton("÷", 3,1)
+            GridItem( Display(), 0,0, 4,1 )
+            GridItem( Button("c"), 0,1,  1,1 )
+            OpButton( "CCC" )
+            GridItem( Button("⌫"), 2,1,  1,1)
+            GridItem( Button("÷"), 3,1,  1,1)
 
-            DigitButton("7", 0,2)
-            DigitButton("8", 1,2)
-            DigitButton("9", 2,2)
-            OpButton("*", 3,2)
+            GridItem( Button("7"), 0,2,  1,1)
+            GridItem( Button("8"), 1,2,  1,1)
+            GridItem( Button("9"), 2,2,  1,1)
+            GridItem( Button("*"), 3,2,  1,1)
 
-            DigitButton("4", 0,3)
-            DigitButton("5", 1,3)
-            DigitButton("6", 2,3)
-            OpButton("-", 3,3)
+            GridItem( Button("4"), 0,3,  1,1)
+            GridItem( Button("5"), 1,3,  1,1)
+            GridItem( Button("6"), 2,3,  1,1)
+            GridItem( Button("-"), 3,3,  1,1)
 
-            DigitButton("1", 0,4)
-            DigitButton("2", 1,4)
-            DigitButton("3", 2,4)
-            OpButton("+", 3,4)
+            GridItem( Button("1"), 0,4,  1,1)
+            GridItem( Button("2"), 1,4,  1,1)
+            GridItem( Button("3"), 2,4,  1,1)
+            GridItem( Button("+"), 3,4,  1,1)
 
-            OpButton("±", 0.5)
-            DigitButton("0", 1,5)
-            OpButton(".", 2.5)
-            OpButton("=", 3.5)
+            GridItem( Button("±"), 0.5,  1,1)
+            GridItem( Button("0"), 1,5,  1,1)
+            GridItem( Button("."), 2.5,  1,1)
+            GridItem( Button("="), 3.5,  1,1)
         }
 
     "#;
 
-    match build_main_widget(src) {
-        Ok(v) => v,
-        Err(e) => {
-            match e {
-                Error::ParseError(s) => panic!("{s:?} :\n{}", skui::render_error(src, s.span.clone(), 3)),
-                e @ _ => panic!("{:?}", e),
+    build_widget(src)
+}
+
+fn build_widget(src:&str) -> NewWidget<impl Widget + ?Sized> {
+    let tks = TokensAndSpan::new(src);
+    match SKUI::parse(&tks) {
+        Ok(skui) => {
+            //println!("{:#?}", skui.components);
+            let Some(params_stack) = ParamsStack::new_main(&skui)
+            else { return NewWidget::new( Label::new( "Can't find Main component." ) ).erased() };
+            match DefaultWidgetBuilder::build_widget( &params_stack ) {
+                Ok(widget) => widget.erased(),
+                Err(e) => NewWidget::new( Label::new( format!("{e:#?}") ) ).erased()
             }
+        }
+        Err( e ) => {
+            let text = format!("{e:#?}\n{}", render_error(src, e.span.clone(),3));
+            NewWidget::new( Label::new( text ) ).erased()
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::Component;
+use crate::token::Token;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PseudoClass {
@@ -40,17 +41,9 @@ pub enum SelectorKind<'a> {
     Tag(&'a str),
 }
 
-// Element 구조 (간소화)
-pub struct Element<'a> {
-    pub id: Option<&'a str>,
-    pub classes: &'a [&'a str],
-    pub tag: &'a str,
-    pub state: ElementState,
-    pub parent: Option<&'a Element<'a>>,
-}
 
 #[derive(Default)]
-pub struct ElementState {
+pub struct PseudoState {
     pub hovered: bool,
     pub active: bool,
     pub focused: bool,
@@ -100,13 +93,13 @@ impl<'a> SimpleSelector<'a> {
         self
     }
 
-    pub fn is_matches(&self, element: &Element<'a>) -> bool {
+    pub fn is_matches(&self, element: &Component<'a>, state:PseudoState) -> bool {
         // 모든 SelectorKind 매칭 (AND)
         for kind in &self.kinds {
             let matches = match kind {
                 SelectorKind::Id(id) => element.id == Some(id),
                 SelectorKind::Class(class) => element.classes.contains(class),
-                SelectorKind::Tag(tag) => element.tag == *tag,
+                SelectorKind::Tag(tag) => element.name == *tag,
             };
 
             if !matches {
@@ -117,10 +110,10 @@ impl<'a> SimpleSelector<'a> {
         // pseudo_class 체크
         if let Some(pseudo) = &self.pseudo_class {
             match pseudo {
-                PseudoClass::Hover => element.state.hovered,
-                PseudoClass::Active => element.state.active,
-                PseudoClass::Focus => element.state.focused,
-                PseudoClass::Disabled => element.state.disabled,
+                PseudoClass::Hover => state.hovered,
+                PseudoClass::Active => state.active,
+                PseudoClass::Focus => state.focused,
+                PseudoClass::Disabled => state.disabled,
             }
         } else {
             true
@@ -129,18 +122,18 @@ impl<'a> SimpleSelector<'a> {
 }
 
 impl<'a> Selector<'a> {
-    pub fn is_matches(&self, element: &Element<'a>) -> bool {
+    pub fn is_matches(&self, element: &Component<'a>, state:PseudoState) -> bool {
         match self {
-            Selector::Simple(simple) => simple.is_matches(element),
+            Selector::Simple(simple) => simple.is_matches(element, state),
 
             // Group: 하나라도 매칭 (OR)
             Selector::Group(selectors) => {
-                selectors.iter().any(|sel| sel.is_matches(element))
+                selectors.iter().any(|sel| sel.is_matches(element, state))
             }
 
             // Descendant: 조상 중에 매칭되는 것이 있는지
             Selector::Descendant(ancestor_sel, descendant_sel) => {
-                if !descendant_sel.is_matches(element) {
+                if !descendant_sel.is_matches(element, state) {
                     return false;
                 }
 
@@ -179,7 +172,144 @@ impl<'a> Selector<'a> {
     pub fn child(parent: Selector<'a>, child: Selector<'a>) -> Self {
         Selector::Child(Box::new(parent), Box::new(child))
     }
+
+    pub fn parse_selector<'a>(tokens: Vec<Token<'a>>) -> Result<Selector<'a>, ParseError> {
+        SelectorParser::new(tokens).parse()
+    }
 }
+
+#[derive(Debug)]
+pub enum ParseError {
+    UnexpectedToken(String),
+    UnexpectedEnd,
+    EmptySelector,
+}
+
+pub struct SelectorParser<'a> {
+    tokens: Vec<Token<'a>>,
+    pos: usize,
+}
+
+impl<'a> SelectorParser<'a> {
+    pub fn new(tokens: Vec<Token<'a>>) -> Self {
+        Self { tokens, pos: 0 }
+    }
+
+    pub fn parse(mut self) -> Result<Selector<'a>, ParseError> {
+        self.parse_selector_group()
+    }
+
+    // Group 파싱: selector1, selector2, selector3
+    fn parse_selector_group(&mut self) -> Result<Selector<'a>, ParseError> {
+        let mut selectors = vec![self.parse_combinator_chain()?];
+
+        while self.peek() == Some(&Token::Comma) {
+            self.advance(); // consume comma
+            selectors.push(self.parse_combinator_chain()?);
+        }
+
+        if !self.is_end() {
+            return Err(ParseError::UnexpectedToken(format!("{:?}", self.peek())));
+        }
+
+        if selectors.len() == 1 {
+            Ok(selectors.into_iter().next().unwrap())
+        } else {
+            Ok(Selector::Group(selectors))
+        }
+    }
+
+    // Combinator 파싱: A > B, A B
+    fn parse_combinator_chain(&mut self) -> Result<Selector<'a>, ParseError> {
+        let mut left = self.parse_simple_selector()?;
+
+        loop {
+            // 공백 (descendant) 또는 > (child)
+            match self.peek() {
+                Some(Token::Gt) => {
+                    self.advance(); // consume >
+                    let right = self.parse_simple_selector()?;
+                    left = Selector::Child(Box::new(left), Box::new(right));
+                }
+                Some(Token::Id(_)) | Some(Token::Class(_)) | Some(Token::Ident(_)) | Some(Token::Colon) => {
+                    // 공백으로 구분된 descendant (implicit)
+                    let right = self.parse_simple_selector()?;
+                    left = Selector::Descendant(Box::new(left), Box::new(right));
+                }
+                _ => break,
+            }
+        }
+
+        Ok(left)
+    }
+
+    // Simple selector 파싱: button#id.class:hover
+    fn parse_simple_selector(&mut self) -> Result<Selector<'a>, ParseError> {
+        let mut simple = SimpleSelector::new();
+        let mut has_any = false;
+
+        // Tag, Id, Class를 순서 상관없이 파싱
+        loop {
+            match self.peek() {
+                Some(Token::Ident(tag)) => {
+                    simple = simple.tag(tag);
+                    self.advance();
+                    has_any = true;
+                }
+                Some(Token::Id(id)) => {
+                    simple = simple.id(id);
+                    self.advance();
+                    has_any = true;
+                }
+                Some(Token::Class(class)) => {
+                    simple = simple.class(class);
+                    self.advance();
+                    has_any = true;
+                }
+                Some(Token::Colon) => {
+                    self.advance(); // consume :
+                    if let Some(Token::Ident(pseudo)) = self.peek() {
+                        simple = match *pseudo {
+                            "hover" => simple.hover(),
+                            "active" => simple.active(),
+                            "focus" => simple.focus(),
+                            "disabled" => simple.disabled(),
+                            _ => return Err(ParseError::UnexpectedToken(
+                                format!("Unknown pseudo-class: {}", pseudo)
+                            )),
+                        };
+                        self.advance();
+                        has_any = true;
+                    } else {
+                        return Err(ParseError::UnexpectedEnd);
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        if !has_any {
+            return Err(ParseError::EmptySelector);
+        }
+
+        Ok(Selector::Simple(simple))
+    }
+
+    fn peek(&self) -> Option<&Token<'a>> {
+        self.tokens.get(self.pos)
+    }
+
+    fn advance(&mut self) {
+        self.pos += 1;
+    }
+
+    fn is_end(&self) -> bool {
+        self.pos >= self.tokens.len()
+    }
+}
+
+// 편의 함수
+
 
 
 #[cfg(test)]
@@ -192,7 +322,7 @@ mod tests {
             id: Some("submit"),
             classes: &["button", "primary"],
             tag: "button",
-            state: ElementState {
+            state: PseudoState {
                 hovered: true,
                 ..Default::default()
             },

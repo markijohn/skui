@@ -13,7 +13,7 @@ use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
 use skui::{render_error, SKUIParseError, TokensAndSpan, SKUI};
 //mod builder;
-use skui_masonry_example::{get_widget_tag, DefaultWidgetBuilder, RootWidgetBuilder};
+use skui_masonry_example::{DefaultWidgetBuilder, RootWidgetBuilder};
 use skui_masonry_example::params::ParamsStack;
 
 const TEXT_INPUT_TAG: WidgetTag<TextInput> = WidgetTag::named("text_input");
@@ -33,22 +33,15 @@ impl AppDriver for Driver {
         _widget_id: WidgetId,
         action: ErasedAction,
     ) {
-        // let input_tag = TEXT_INPUT_TAG;
-        // let list_tag = LIST_TAG;
-        let (input_tag, list_tag) = unsafe { (
-            get_widget_tag::<TextInput>("text_input"),
-            get_widget_tag::<Flex>("list")
-        ) };
-
         debug_assert_eq!(window_id, self.window_id, "unknown window");
         if action.is::<ButtonPress>() {
             let render_root = ctx.render_root(window_id);
 
-            render_root.edit_widget_with_tag(input_tag, |mut text_input| {
+            render_root.edit_widget_with_tag(TEXT_INPUT_TAG, |mut text_input| {
                 let mut text_area = TextInput::text_mut(&mut text_input);
                 TextArea::reset_text(&mut text_area, "");
             });
-            render_root.edit_widget_with_tag(list_tag, |mut list| {
+            render_root.edit_widget_with_tag(LIST_TAG, |mut list| {
                 let child = Label::new(self.next_task.clone()).with_auto_id();
                 Flex::add_fixed(&mut list, child);
             });
@@ -90,23 +83,25 @@ pub fn make_widget_tree() -> NewWidget<impl Widget + ?Sized> {
     // NewWidget::new(root)
 
     let src = r#"
-    Main: Flex(Vertical) {
+    Main:
+        Flex(Vertical) {
             Flex(Horizontal) {
-                padding : 30.0
+                padding : 5
                 FlexItem(TextInput("ex: 'Do the dishes', 'File my taxes', ...") #text_input , 1.0 )
                 Button("Add task")
             }
-            Spacing(1.0)
-            FlexItem( Portal(
-                Flex(axis=Vertical, cross_axis_alignment=Start) #list
-            ), 1.0 )
+            FlexSpace(1)
+            FlexItem( Portal(Flex(axis=Vertical, cross_axis_alignment=Start) #list)
+            , 1.0 )
         }
     "#;
+    build_widget( src )
+}
 
+fn build_widget(src:&str) -> NewWidget<impl Widget + ?Sized> {
     let tks = TokensAndSpan::new(src);
     match SKUI::parse(&tks) {
         Ok(skui) => {
-            println!("{:#?}", skui.components);
             let Some(params_stack) = ParamsStack::new_main(&skui)
             else { return NewWidget::new( Label::new( "Can't find Main component." ) ).erased() };
             match DefaultWidgetBuilder::build_widget( &params_stack ) {
@@ -119,7 +114,6 @@ pub fn make_widget_tree() -> NewWidget<impl Widget + ?Sized> {
             NewWidget::new( Label::new( text ) ).erased()
         }
     }
-
 }
 
 fn main() {

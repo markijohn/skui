@@ -13,8 +13,8 @@ pub enum ValueConvError {
 }
 
 impl ValueConvError {
-    pub fn specific(self, idx:usize, key:&'static str) -> ArgumentError {
-        ArgumentError {idx, key, err:self}
+    pub fn specific(self, func:&str, comp:&str, idx:usize, key:&'static str) -> ArgumentError {
+        ArgumentError {func:func.into(), comp:comp.into(), idx, key, err:self}
     }
 }
 
@@ -131,6 +131,8 @@ impl_from_value!(InsertNewline {OnEnter, OnShiftEnter, Never});
 
 #[derive(Debug,Clone)]
 pub struct ArgumentError {
+    pub func:String,
+    pub comp:String,
     pub idx:usize,
     pub key:&'static str,
     pub err:ValueConvError,
@@ -160,32 +162,48 @@ impl<'a> ParamsStack<'a> {
             call_params:None,
             component: main_comp,
             params_stack:vec![&main_comp.params],
-            wrap_id:None,
-            wrap_classes:None,
+            wrap_id:None, //for extern caller
+            wrap_classes:None, //for extern caller
             skui
         } )
     }
 
     pub fn new_stack(&self, comp:&'a Component<'a>) -> Self {
-        let mut stack = self.params_stack.clone();
-        let (wrap_id, wrap_classes) = if let Some(root_comp) = self.skui.get_root_component(comp.name) {
-            stack.push(&comp.params);
-            (root_comp.component.id, Some(root_comp.component.classes.as_slice()) )
-        } else {
-            let last = stack.len() - 1;
-            stack[last] = &comp.params;
-            (None, None)
-        };
 
-        Self {
-            fn_name: self.fn_name,
-            call_params: self.call_params,
-            params_stack: stack,
-            wrap_id,
-            wrap_classes,
-            component: comp,
-            skui: self.skui
+        //This component is caller component(defined)
+        if let Some(root_comp) = self.skui.get_root_component(comp.name) {
+            let root_lookup_comp = &root_comp.component;
+            let mut stack = self.params_stack.clone();
+            //stack.push(&root_lookup_comp.params);
+            let last = stack.len();
+            stack[last - 1] = &root_lookup_comp.params;
+            let wrap_classes = if comp.classes.len() > 0 {
+                Some(comp.classes.as_slice())
+            } else { None };
+            Self {
+                fn_name : root_comp.name, //Find external
+                call_params : Some(&comp.params),
+                params_stack : stack,
+                wrap_id : comp.id,
+                wrap_classes,
+                component : root_lookup_comp,
+                skui : self.skui
+            }
+        } else {
+            let mut stack = self.params_stack.clone();
+            let last = stack.len();
+            stack[last - 1] = &comp.params;
+            Self {
+                fn_name : self.fn_name,
+                call_params : self.call_params,
+                params_stack : stack,
+                wrap_id : None,
+                wrap_classes : None,
+                component: comp,
+                skui : self.skui
+            }
         }
+
     }
 
     pub fn get_id(&self) -> Option<&'a str> {
@@ -247,8 +265,8 @@ macro_rules! impl_from_params {
                 let mut cnt = 0;
                 $(
                 $(
-                let value = params.get(cnt, stringify!($name)).ok_or( ArgumentError{err:ValueConvError::MandatoryParamMissing, idx:cnt, key:stringify!($name)})?;
-                let $name = <$name_ty as FromValue<'a>>::from_value(value).map_err(|e| e.specific(cnt, stringify!($name)))?;
+                let value = params.get(cnt, stringify!($name)).ok_or( ArgumentError{err:ValueConvError::MandatoryParamMissing, func:params.fn_name.into(), comp:params.component.name.into(), idx:cnt, key:stringify!($name)})?;
+                let $name = <$name_ty as FromValue<'a>>::from_value(value).map_err(|e| e.specific(params.fn_name, params.component.name, cnt, stringify!($name)))?;
                 cnt += 1;
                 )*
                 )?
@@ -256,7 +274,7 @@ macro_rules! impl_from_params {
                 $(
                 $(
                 let $opt_name = if let Some(value) = params.get(cnt, stringify!($opt_name)) {
-                    Some( <$opt_ty as FromValue<'a>>::from_value(value).map_err(|e| e.specific(cnt, stringify!($opt_name)))? )
+                    Some( <$opt_ty as FromValue<'a>>::from_value(value).map_err(|e| e.specific(params.fn_name, params.component.name,cnt, stringify!($opt_name)))? )
                 } else {
                     None
                 };
