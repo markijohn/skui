@@ -10,6 +10,12 @@ pub enum Parameters<'a> {
 }
 
 impl <'a> Parameters<'a> {
+    pub fn get(&self, idx:usize, key:&'a str) -> Option<&Value> {
+        match self {
+            Parameters::Map(map) => map.get(key),
+            Parameters::Args(list) => list.get(idx),
+        }
+    }
     pub fn get_as_rk(&self, key: &'a [ValueKey]) -> Option<&Value> {
         if key.len() == 0 { return None }
         let first = &key[0];

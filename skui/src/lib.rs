@@ -196,12 +196,22 @@ pub struct Component<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub struct RootComponent<'a> {
+    pub name: &'a str,
+    pub component: Component<'a>,
+}
+
+#[derive(Debug, Clone)]
 pub struct SKUI<'a> {
     pub styles: Vec<Style<'a>>,
-    pub components: Vec<Component<'a>>,
+    pub components: Vec<RootComponent<'a>>,
 }
 
 impl <'a> SKUI <'a> {
+
+    pub fn get_root_component(&self, name:&str) -> Option<&RootComponent<'a>> {
+        self.components.iter().find(|rc| rc.name == name)
+    }
     pub fn parse( tks: &'a TokensAndSpan) -> Result<Self, SKUIParseError> {
         parse(tks).map_err(|e| SKUIParseError { span: e.span, kind: e.kind })
     }
@@ -216,9 +226,8 @@ impl <'a> SKUI <'a> {
         let item_wrap = self.components.iter()
             .find(|rc|
                 rc.name == c.name
-                    && targets.iter().find( |&&s| s == rc.name ).is_some()
-                    && rc.children.len() == 1
-                    && rc.children[0].name == "Item").map( |rc| &rc.children[0]);
+                    && targets.iter().find( |&&s| s == rc.component.name ).is_some()
+                    ).map( |rc| &rc.component);
         item_wrap.unwrap_or( c )
     }
 }
@@ -412,12 +421,19 @@ fn parse_component<'a>(cursor:Cursor<'a>) -> CursorResult<Component> {
     })
 }
 
-pub fn parse_tokens<'a>( tokens: &'a [Token<'a>] ) -> Result<(Vec<Style<'a>>,Vec<Component<'a>>)> {
+pub fn parse_tokens<'a>( tokens: &'a [Token<'a>] ) -> Result<(Vec<Style<'a>>,Vec<RootComponent<'a>>)> {
     let mut cursor = Cursor::new( tokens );
     let mut styles = vec![];
-    let mut components = vec![];
+    let mut root_components = vec![];
 
     while !cursor.is_eof() {
+        if let (next, [Token::Ident(name), Token::Colon]) = cursor.fork().consume() {
+            let component;
+            (cursor, component) = parse_component(next)?;
+            root_components.push(RootComponent{name, component});
+            continue;
+        }
+
         let mut check_fork = cursor.fork();
         let is_style_item = take_match!(check_fork,
             [Token::Id(_)] => true,
@@ -433,17 +449,12 @@ pub fn parse_tokens<'a>( tokens: &'a [Token<'a>] ) -> Result<(Vec<Style<'a>>,Vec
             continue;
         }
 
-        if let (_, [Token::Ident(_), Token::LParen]) = cursor.fork().consume() {
-            let component;
-            (cursor, component) = parse_component(cursor)?;
-            components.push(component);
-            continue;
-        }
+
 
         //Error
         return Err(ParseError::unknown_start(cursor.span()));
     }
-    Ok( (styles, components) )
+    Ok( (styles, root_components) )
 }
 
 #[derive(Debug,Clone)]
@@ -581,55 +592,55 @@ mod tests {
     use super::*;
 
     #[test]
-    // fn test_parse() {
-    //     let input = r#"
-    //         Flex { background-color: black; padding:1px }
-    //         #list { border: 1px solid yellow }
-    //         .myBtn { border: 2px }
-    //         #myFlex { border:2px }
-    //         .background_white { background-color: WHITE }
-    //
-    //         Flex(MainFill) #myFlex .background_white {
-    //             myProperty1 : "data"
-    //             propertyMap : {key=1, key2=true}
-    //             propertyAnother : [ 1,2,3 ]
-    //             FlexItem(1.0, Button("FlexItem1"))
-    //             FlexItem(2.0, Button("FlexItem2"))
-    //             Button()
-    //             Flex() {
-    //                 Label("1") Label("2")
-    //             }
-    //         }
-    //
-    //         Grid(2,3) {
-    //             Label()
-    //         }
-    //
-    //         CustomWidget() {
-    //             Flex() {
-    //                 FlexItem( 0.5, Button("OK") )
-    //                 FlexItem( 0.5, Button("Cancel") )
-    //             }
-    //         }
-    //     "#;
-    //
-    //     match parse(input) {
-    //         Ok(parsed) => {
-    //             println!("Parsed successfully!");
-    //
-    //             for style in parsed.styles.iter() {
-    //                 println!("{:#?}", style);
-    //             }
-    //             for comp in parsed.components.iter() {
-    //                 println!("{:#?}", comp);
-    //             }
-    //         }
-    //         Err(e) => {
-    //             println!("Parse error: {:?}", e);
-    //             panic!("Cause : \n{}", render_error(input, e.span, 2));
-    //         }
-    //     }
-    // }
+    fn test_parse() {
+        let input = r#"
+            Flex { background-color: black; padding:1px }
+            #list { border: 1px solid yellow }
+            .myBtn { border: 2px }
+            #myFlex { border:2px }
+            .background_white { background-color: WHITE }
+
+            Main:
+            Flex(MainFill) #myFlex .background_white {
+                myProperty1 : "data"
+                propertyMap : {key=1, key2=true}
+                propertyAnother : [ 1,2,3 ]
+                FlexItem(1.0, Button("FlexItem1"))
+                FlexItem(2.0, Button("FlexItem2"))
+                Button()
+                Flex() {
+                    Label("1") Label("2")
+                }
+            }
+
+
+            Custom:
+            CustomWidget() {
+                Flex() {
+                    FlexItem( 0.5, Button("OK") )
+                    FlexItem( 0.5, Button("Cancel") )
+                }
+            }
+        "#;
+
+        let tks = TokensAndSpan::new(input);
+        match SKUI::parse(&tks) {
+            Ok(parsed) => {
+                println!("Parsed successfully!");
+
+                for style in parsed.styles.iter() {
+                    println!("{:#?}", style);
+                }
+                for comp in parsed.components.iter() {
+                    println!("{:#?}", comp);
+                }
+            }
+            Err(e) => {
+                println!("Parse error: {:?}", e);
+                panic!("Cause : \n{}", render_error(input, e.span, 2));
+            }
+        }
+    }
 
     #[test]
     fn narr() {

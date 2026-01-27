@@ -12,48 +12,6 @@ use crate::WidgetBuilder;
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug,Clone)]
-pub enum Error {
-    RootComponentNotFound,
-
-    UnknownComponent(String),
-    RequiredChildren(usize),
-    AtLeastOneRequired,
-    ExactlyTwoChildRequired,
-    ParseError(SKUIParseError),
-    InvalidParameter(ArgumentError),
-    GridChildMustBeItem,
-    MultipleChildDefinitions(String)
-}
-
-impl From<SKUIParseError> for Error {
-    fn from(e:SKUIParseError) -> Self {
-        Error::ParseError(e)
-    }
-}
-
-impl From<ArgumentError> for Error {
-    fn from(e:ArgumentError) -> Self {
-        Error::InvalidParameter(e)
-    }
-}
-
-static WID_TABLE: std::sync::LazyLock<std::sync::RwLock<HashMap<String, &'static str>>> =
-    std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()) );
-
-unsafe fn get_widget_id(map_id: &str) -> &'static str {
-    if let Some(&id) = WID_TABLE.read().unwrap().get(map_id) {
-        return id;
-    }
-    let leaked: &'static str = Box::leak(map_id.to_string().into_boxed_str());
-    WID_TABLE.write().unwrap().insert(map_id.to_string(), leaked);
-    leaked
-}
-
-pub unsafe fn get_widget_tag<W:Widget>(map_id: &str) -> WidgetTag<W> {
-    unsafe { WidgetTag::<W>::named( get_widget_id(map_id) ) }
-}
-
 fn get_main_component<'a>(skui:&'a SKUI) -> Result<&'a Component<'a>> {
     let none_id_comp = skui.components.iter().find( |&c| c.id.is_none() );
     let main_id_comp = skui.components.iter().find( |&c| c.name == "Main" );

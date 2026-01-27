@@ -11,9 +11,10 @@ use masonry::widgets::{Button, ButtonPress, Flex, Label, Portal, TextAction, Tex
 use masonry_testing::TestHarness;
 use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
-
+use skui::{render_error, SKUIParseError, TokensAndSpan, SKUI};
 //mod builder;
-use skui_masonry_example::{build_main_widget, get_widget_tag};
+use skui_masonry_example::{get_widget_tag, DefaultWidgetBuilder, RootWidgetBuilder};
+use skui_masonry_example::params::ParamsStack;
 
 const TEXT_INPUT_TAG: WidgetTag<TextInput> = WidgetTag::named("text_input");
 const LIST_TAG: WidgetTag<Flex> = WidgetTag::named("list");
@@ -89,22 +90,36 @@ pub fn make_widget_tree() -> NewWidget<impl Widget + ?Sized> {
     // NewWidget::new(root)
 
     let src = r#"
-    Main() {
-        Flex(Vertical) {
+    Main: Flex(Vertical) {
             Flex(Horizontal) {
                 padding : 30.0
                 FlexItem(TextInput("ex: 'Do the dishes', 'File my taxes', ...") #text_input , 1.0 )
                 Button("Add task")
             }
             Spacing(1.0)
-            Flex(axis=Vertical, cross_axis_alignment=Start) #list {
-                overflow: scroll
-            }
+            FlexItem( Portal(
+                Flex(axis=Vertical, cross_axis_alignment=Start) #list
+            ), 1.0 )
         }
-    }
     "#;
 
-    build_main_widget(src).unwrap()
+    let tks = TokensAndSpan::new(src);
+    match SKUI::parse(&tks) {
+        Ok(skui) => {
+            println!("{:#?}", skui.components);
+            let Some(params_stack) = ParamsStack::new_main(&skui)
+            else { return NewWidget::new( Label::new( "Can't find Main component." ) ).erased() };
+            match DefaultWidgetBuilder::build_widget( &params_stack ) {
+                Ok(widget) => widget.erased(),
+                Err(e) => NewWidget::new( Label::new( format!("{e:#?}") ) ).erased()
+            }
+        }
+        Err( e ) => {
+            let text = format!("{e:#?}\n{}", render_error(src, e.span.clone(),3));
+            NewWidget::new( Label::new( text ) ).erased()
+        }
+    }
+
 }
 
 fn main() {
