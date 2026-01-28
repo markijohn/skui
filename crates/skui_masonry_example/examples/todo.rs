@@ -11,7 +11,7 @@ use masonry::widgets::{Button, ButtonPress, Flex, Label, Portal, TextAction, Tex
 use masonry_testing::TestHarness;
 use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
-use skui::{render_error, SKUIParseError, TokensAndSpan, SKUI};
+use skui::{render_error, Parameters, SKUIParseError, TokensAndSpan, SKUI};
 //mod builder;
 use skui_masonry_example::{DefaultWidgetBuilder, RootWidgetBuilder};
 use skui_masonry_example::params::ParamsStack;
@@ -82,14 +82,25 @@ pub fn make_widget_tree() -> NewWidget<impl Widget + ?Sized> {
     //
     // NewWidget::new(root)
 
+
+    // Flex(Horizontal) {
+    //     padding : 5
+    //     FlexItem(TextInput("ex: 'Do the dishes', 'File my taxes', ...") #text_input , 1.0 )
+    //     Button("Add task")
+    // }
+
     let src = r#"
+
+    TopPanel:
+    Flex(Horizontal) {
+                padding : 5
+                FlexItem(TextInput( ${0} ) #text_input , 1.0 )
+                Button( ${1} )
+            }
+
     Main:
         Flex(Vertical) {
-            Flex(Horizontal) {
-                padding : 5
-                FlexItem(TextInput("ex: 'Do the dishes', 'File my taxes', ...") #text_input , 1.0 )
-                Button("Add task")
-            }
+            TopPanel( "ex: 'Do the dishes', 'File my taxes', ...", "Add task" )
             FlexSpace(1)
             FlexItem( Portal(Flex(axis=Vertical, cross_axis_alignment=Start) #list)
             , 1.0 )
@@ -102,7 +113,8 @@ fn build_widget(src:&str) -> NewWidget<impl Widget + ?Sized> {
     let tks = TokensAndSpan::new(src);
     match SKUI::parse(&tks) {
         Ok(skui) => {
-            let Some(params_stack) = ParamsStack::new_main(&skui)
+            let parameters = Parameters::empty();
+            let Some(params_stack) = ParamsStack::new_main(&parameters, &skui)
             else { return NewWidget::new( Label::new( "Can't find Main component." ) ).erased() };
             match DefaultWidgetBuilder::build_widget( &params_stack ) {
                 Ok(widget) => widget.erased(),

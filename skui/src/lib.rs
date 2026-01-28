@@ -2,7 +2,7 @@ mod token;
 mod value;
 mod params;
 mod cursor;
-// mod selector;
+mod selector;
 
 use token::Token;
 use cursor::TokenCursor;
@@ -438,7 +438,7 @@ pub fn parse_tokens<'a>( tokens: &'a [Token<'a>] ) -> Result<(Vec<Style<'a>>,Vec
     let mut root_components = vec![];
 
     while !cursor.is_eof() {
-        if let (next, [Token::Ident(name), Token::Colon]) = cursor.fork().consume() {
+        if let (next, [Token::Ident(name), Token::Colon, Token::Ident(_)]) = cursor.fork().consume() {
             let component;
             (cursor, component) = parse_component(next)?;
             root_components.push(RootComponent{name, component});

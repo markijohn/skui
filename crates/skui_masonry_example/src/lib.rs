@@ -1,5 +1,6 @@
 //mod builder;
 pub mod params;
+mod q;
 
 use std::collections::HashMap;
 use masonry::core::{ErasedAction, NewWidget, Properties, Widget, WidgetOptions, WidgetTag};
@@ -167,7 +168,6 @@ impl WidgetBuilder for Flex {
         if let Some(main_axis_align) = flex_args.main_axis_alignment { widget = widget.main_axis_alignment(main_axis_align);}
         if let Some(cross_axis_align) = flex_args.cross_axis_alignment { widget = widget.cross_axis_alignment(cross_axis_align);}
         for mut c in params_stack.children() {
-            //c = params_stack.skui.get_lookup_scoped_component(c, &["FlexItem"]);
             let flex_child_stack = params_stack.new_stack( c );
             match flex_child_stack.component.name {
                 "FlexItem" => {
@@ -185,7 +185,7 @@ impl WidgetBuilder for Flex {
                     }
                 }
                 _ => {
-                    let child = B::build_widget(&params_stack.new_stack(c))?;
+                    let child = B::build_widget(&flex_child_stack.new_stack(c))?;
                     widget = widget.with_fixed( child );
                 }
             }

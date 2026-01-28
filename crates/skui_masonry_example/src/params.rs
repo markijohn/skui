@@ -142,7 +142,6 @@ pub struct ArgumentError {
 #[derive(Debug,Clone)]
 pub struct ParamsStack<'a> {
     pub fn_name : &'a str,
-    pub call_params : Option<&'a Parameters<'a>>,
     pub params_stack : Vec<&'a Parameters<'a>>,
     pub wrap_id : Option<&'a str>,
     pub wrap_classes : Option<&'a [&'a str]>,
@@ -155,13 +154,12 @@ const MAIN_COMPONENT_NAME: &'static str = "Main";
 
 impl<'a> ParamsStack<'a> {
 
-    pub fn new_main(skui:&'a SKUI<'a>) -> Option<Self> {
+    pub fn new_main(param:&'a Parameters<'a>, skui:&'a SKUI<'a>) -> Option<Self> {
         let main_comp = &skui.get_root_component(MAIN_COMPONENT_NAME)?.component;
         Some( Self {
             fn_name: MAIN_COMPONENT_NAME,
-            call_params:None,
             component: main_comp,
-            params_stack:vec![&main_comp.params],
+            params_stack:vec![param],
             wrap_id:None, //for extern caller
             wrap_classes:None, //for extern caller
             skui
@@ -170,19 +168,17 @@ impl<'a> ParamsStack<'a> {
 
     pub fn new_stack(&self, comp:&'a Component<'a>) -> Self {
 
-        //This component is caller component(defined)
+        //This component is caller root component
         if let Some(root_comp) = self.skui.get_root_component(comp.name) {
             let root_lookup_comp = &root_comp.component;
             let mut stack = self.params_stack.clone();
-            //stack.push(&root_lookup_comp.params);
-            let last = stack.len();
-            stack[last - 1] = &root_lookup_comp.params;
+            println!("CALLL PARAM {:?}", comp.params);
+            stack.push(&comp.params);
             let wrap_classes = if comp.classes.len() > 0 {
                 Some(comp.classes.as_slice())
             } else { None };
             Self {
-                fn_name : root_comp.name, //Find external
-                call_params : Some(&comp.params),
+                fn_name : root_comp.name, //== comp.name
                 params_stack : stack,
                 wrap_id : comp.id,
                 wrap_classes,
@@ -190,12 +186,9 @@ impl<'a> ParamsStack<'a> {
                 skui : self.skui
             }
         } else {
-            let mut stack = self.params_stack.clone();
-            let last = stack.len();
-            stack[last - 1] = &comp.params;
+            let stack = self.params_stack.clone();
             Self {
                 fn_name : self.fn_name,
-                call_params : self.call_params,
                 params_stack : stack,
                 wrap_id : None,
                 wrap_classes : None,
@@ -210,13 +203,14 @@ impl<'a> ParamsStack<'a> {
         self.wrap_id.or( self.component.id )
     }
 
-    // pub fn get_classes(&self) -> impl Iterator<Item=&'a str> {
-    //     self.wrap_classes.unwrap_or( &[] ).iter().chain( self.component.classes.iter() )
-    // }
+    pub fn get_classes(&self) -> impl Iterator<Item=&'a str> {
+        self.wrap_classes.unwrap_or( &[] ).iter().chain( self.component.classes.iter() ).copied()
+    }
 
     pub fn get(&self, idx:usize, key:&'a str) -> Option<&'a Value<'a>> {
         let mut curr_val:Option<&'a Value<'a>> = None;
-        for &stack in self.params_stack.iter().rev().chain( self.call_params.iter() ) {
+
+        for stack in std::iter::once(&self.component.params).chain( self.params_stack.iter().rev().copied() ) {
             if let Some(Value::Relative( key)) = curr_val {
                 let value = stack.get_as_rk( key.as_slice() );
                 if let Some(v) = value {

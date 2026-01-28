@@ -5,11 +5,11 @@ use crate::{Value, ValueKey};
 #[derive(Debug, Clone)]
 pub enum Parameters<'a> {
     Map(HashMap<&'a str,Value<'a>>),
-    //Args(ArrayVec<[Value<'a>;7]>),
     Args(Vec<Value<'a>>),
 }
 
 impl <'a> Parameters<'a> {
+    pub fn empty() -> Self { Parameters::Args( Vec::new() ) }
     pub fn get(&self, idx:usize, key:&'a str) -> Option<&Value> {
         match self {
             Parameters::Map(map) => map.get(key),

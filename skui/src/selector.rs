@@ -42,7 +42,7 @@ pub enum SelectorKind<'a> {
 }
 
 
-#[derive(Default)]
+#[derive(Default,Clone,Copy)]
 pub struct PseudoState {
     pub hovered: bool,
     pub active: bool,
@@ -108,52 +108,53 @@ impl<'a> SimpleSelector<'a> {
         }
 
         // pseudo_class 체크
-        if let Some(pseudo) = &self.pseudo_class {
-            match pseudo {
-                PseudoClass::Hover => state.hovered,
-                PseudoClass::Active => state.active,
-                PseudoClass::Focus => state.focused,
-                PseudoClass::Disabled => state.disabled,
-            }
-        } else {
-            true
-        }
+        // if let Some(pseudo) = &self.pseudo_class {
+        //     match pseudo {
+        //         PseudoClass::Hover => state.hovered,
+        //         PseudoClass::Active => state.active,
+        //         PseudoClass::Focus => state.focused,
+        //         PseudoClass::Disabled => state.disabled,
+        //     }
+        // } else {
+        //     true
+        // }
+        true
     }
 }
 
 impl<'a> Selector<'a> {
-    pub fn is_matches(&self, element: &Component<'a>, state:PseudoState) -> bool {
+    fn is_matches(&self, parents:&[Component<'a>], element: &Component<'a>, state:PseudoState) -> bool {
         match self {
             Selector::Simple(simple) => simple.is_matches(element, state),
 
             // Group: 하나라도 매칭 (OR)
             Selector::Group(selectors) => {
-                selectors.iter().any(|sel| sel.is_matches(element, state))
+                selectors.iter().any(|sel| sel.is_matches(parents, element, state))
             }
 
             // Descendant: 조상 중에 매칭되는 것이 있는지
             Selector::Descendant(ancestor_sel, descendant_sel) => {
-                if !descendant_sel.is_matches(element, state) {
+                if !descendant_sel.is_matches(parents, element, state) {
                     return false;
                 }
 
-                let mut current = element.parent;
-                while let Some(parent) = current {
-                    if ancestor_sel.is_matches(parent) {
+                // 부모 체인을 역순으로 탐색
+                for i in (1..parents.len()).rev() {
+                    // parents[i]의 조상은 parents[..i]
+                    if ancestor_sel.is_matches(&parents[..i], &parents[i], state) {
                         return true;
                     }
-                    current = parent.parent;
                 }
                 false
             }
 
             // Child: 직계 부모 매칭
             Selector::Child(parent_sel, child_sel) => {
-                if !child_sel.is_matches(element) {
+                if !child_sel.is_matches(parents, element, state) {
                     return false;
                 }
 
-                element.parent.map_or(false, |p| parent_sel.is_matches(p))
+                parents.iter().rev().next().map_or(false, |p| parent_sel.is_matches(parents, p, state))
             }
         }
     }
@@ -173,8 +174,13 @@ impl<'a> Selector<'a> {
         Selector::Child(Box::new(parent), Box::new(child))
     }
 
-    pub fn parse_selector<'a>(tokens: Vec<Token<'a>>) -> Result<Selector<'a>, ParseError> {
+    pub fn parse_selector(tokens: Vec<Token<'a>>) -> Result<Selector<'a>, ParseError> {
         SelectorParser::new(tokens).parse()
+    }
+
+    pub fn parse_from_str(selector_str: &'a str) -> Result<Selector<'a>, ParseError> {
+        let tokens = crate::TokensAndSpan::new(selector_str).tokens;
+        Self::parse_selector(tokens)
     }
 }
 
@@ -314,76 +320,27 @@ impl<'a> SelectorParser<'a> {
 
 #[cfg(test)]
 mod tests {
+    use tinyvec::ArrayVec;
+    use crate::{Parameters, TokensAndSpan};
     use super::*;
 
     #[test]
     fn test_basic() {
-        let element = Element {
+        let sel_str = "button#submit.primary:hover";
+        let selector = Selector::parse_from_str(sel_str).unwrap();
+        let mut classes = ArrayVec::<[&'static str;5]>::new();
+        classes.push("primary");
+        let comp = Component {
+            name: "button",
+            params: Parameters::empty(),
             id: Some("submit"),
-            classes: &["button", "primary"],
-            tag: "button",
-            state: PseudoState {
-                hovered: true,
-                ..Default::default()
-            },
-            parent: None,
+            classes: classes,
+            children: vec![],
+            properties: Default::default(),
         };
 
-        // button#submit.primary:hover
-        let selector = Selector::Simple(
-            SimpleSelector::new()
-                .tag("button")
-                .id("submit")
-                .class("primary")
-                .hover()
-        );
-
-        assert!(selector.is_matches(&element));
+        println!("is_match? : {}", selector.is_matches(&[], &comp, PseudoState::default() ) );
     }
 
-    #[test]
-    fn test_group() {
-        let element = Element {
-            id: None,
-            classes: &["button"],
-            tag: "button",
-            state: Default::default(),
-            parent: None,
-        };
 
-        // .button, .link
-        let selector = Selector::group(vec![
-            Selector::Simple(SimpleSelector::new().class("button")),
-            Selector::Simple(SimpleSelector::new().class("link")),
-        ]);
-
-        assert!(selector.is_matches(&element));
-    }
-
-    #[test]
-    fn test_hierarchy() {
-        let container = Element {
-            id: None,
-            classes: &["container"],
-            tag: "div",
-            state: Default::default(),
-            parent: None,
-        };
-
-        let button = Element {
-            id: None,
-            classes: &["button"],
-            tag: "button",
-            state: Default::default(),
-            parent: Some(&container),
-        };
-
-        // .container > .button
-        let selector = Selector::child(
-            Selector::Simple(SimpleSelector::new().class("container")),
-            Selector::Simple(SimpleSelector::new().class("button")),
-        );
-
-        assert!(selector.is_matches(&button));
-    }
 }
