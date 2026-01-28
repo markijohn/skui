@@ -438,9 +438,9 @@ pub fn parse_tokens<'a>( tokens: &'a [Token<'a>] ) -> Result<(Vec<Style<'a>>,Vec
     let mut root_components = vec![];
 
     while !cursor.is_eof() {
-        if let (next, [Token::Ident(name), Token::Colon, Token::Ident(_)]) = cursor.fork().consume() {
+        if let (_, [Token::Ident(name), Token::Colon, Token::Ident(_), Token::LParen], ) = cursor.fork().consume() {
             let component;
-            (cursor, component) = parse_component(next)?;
+            (cursor, component) = parse_component( cursor.fork().skip(2) )?;
             root_components.push(RootComponent{name, component});
             continue;
         }
@@ -486,7 +486,6 @@ impl <'a> TokensAndSpan<'a> {
     }
 }
 
-//pub fn tokenize_from_str<'a:'b,'b>(input: &'a str) -> (Vec<Token<'b>>, Vec<Span>) {
 pub fn tokenize_from_str<'a>(input: &'a str) -> (Vec<Token<'a>>, Vec<Span>) {
     let spanned:Vec<(Token,Span)> = Token::lexer(input)
         .spanned()

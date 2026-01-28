@@ -318,7 +318,8 @@ Digit:
 Main :
     Grid(4,6) {
         GridItem( Display(), 0,0, 4,1 )
-        GridItem( Button("c"), 0,1,  1,1 )
+
+        Op( "c", 0,1)
         Op( "C", 1,1)
         Op( "⌫", 2,1)
         Op( "÷", 3,1)

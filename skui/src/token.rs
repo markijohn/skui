@@ -120,7 +120,8 @@ pub enum Token<'a> {
     #[token("|")]
     Pipe,
 
-    #[regex(r"[ \t\r\n]+", logos::skip)]
+    // #[regex(r"[ \t\r\n]+", logos::skip)]
+    #[regex(r"[ \t\r\n]+")]
     Whitespace,
 
     None,

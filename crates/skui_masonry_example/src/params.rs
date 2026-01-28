@@ -167,12 +167,10 @@ impl<'a> ParamsStack<'a> {
     }
 
     pub fn new_stack(&self, comp:&'a Component<'a>) -> Self {
-
         //This component is caller root component
         if let Some(root_comp) = self.skui.get_root_component(comp.name) {
             let root_lookup_comp = &root_comp.component;
             let mut stack = self.params_stack.clone();
-            println!("CALLL PARAM {:?}", comp.params);
             stack.push(&comp.params);
             let wrap_classes = if comp.classes.len() > 0 {
                 Some(comp.classes.as_slice())
