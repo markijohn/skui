@@ -1,6 +1,7 @@
 //mod builder;
 pub mod params;
 mod q;
+mod util;
 
 use std::collections::HashMap;
 use masonry::core::{ErasedAction, NewWidget, Properties, Widget, WidgetOptions, WidgetTag};
@@ -8,7 +9,7 @@ use masonry::layout::Length;
 use masonry::peniko::color::AlphaColor;
 use masonry::properties::{Background, Gap, Padding};
 use masonry::widgets::{Align, Button, Canvas, Checkbox, Flex, FlexParams, Grid, GridParams, Image, IndexedStack, Label, Passthrough, Portal, ProgressBar, Prose, ResizeObserver, SizedBox, Slider, Spinner, Split, TextArea, TextInput, VariableLabel};
-use skui::{Component, Number, Parameters, SKUIParseError, TokenAndSpan, SKUI};
+use skui::{Component, CssValue, Number, Parameters, SKUIParseError, TokenAndSpan, SKUI};
 use crate::params::{AlignArgs, ArgumentError, ButtonArgs, CheckboxArgs, FlexArgs, FlexItemArgs, FlexSpacerArgs, FromParams, GridArgs, GridParamsArgs, IndexedStackArgs, LabelArgs, ParamsStack, PassthroughArgs, PortalArgs, ProgressBarArgs, ProseArgs, ResizeObserverArgs, SizedBoxArgs, SliderArgs, SplitArgs, TextAreaArgs, TextInputArgs, VariableLabelArgs};
 use std::str::FromStr;
 use masonry::parley::{Brush, StyleProperty};
@@ -82,10 +83,19 @@ pub trait RootWidgetBuilder {
 
     fn build_widget<'a>(params_stack:&ParamsStack<'a>) -> Result<NewWidget<impl Widget + ?Sized>, Error>;
 
-    fn build_properties<'a>(c:&Component<'a>) -> Properties {
+    fn build_properties<'a>(c:&Component<'a>, skui:&SKUI<'a>) -> Properties {
         let mut props = Properties::new();
-        if let Some(v) = c.properties.get("padding").and_then(|v| v.as_f64()) { props = props.with(Padding::all(v)) }
-        if let Some(v) = c.properties.get("gap").and_then(|v| v.as_i64()) { props = props.with( Gap::from(Length::px(v as _)) ); }
+        let mut styles = vec![];
+        let mut parents = vec![];
+        skui.get_main_component().unwrap().component.find( &mut parents, c );
+        skui.get_styles(parents.as_slice(), c)
+            .for_each( |style| {
+
+            });
+
+
+        if let Some(v) = c.properties.get("padding").and_then(|v| v.as_f64()) {  }
+        if let Some(v) = c.properties.get("gap").and_then(|v| v.as_i64()) {  }
         if let Some(v) = c.properties.get("background_color").and_then(|v| v.as_str()) {
             if let Ok(col) = AlphaColor::from_str(v) { props = props.with( Background::Color(col) ) }
         }
@@ -107,7 +117,7 @@ pub trait WidgetBuilder {
         let widget = <Self as WidgetBuilder>::build_target::<B>(params_stack)?;
         let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
         let wopts = WidgetOptions::default();
-        let props = B::build_properties(&params_stack.component);
+        let props = B::build_properties(&params_stack.component, &params_stack.skui);
         Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
     }
 

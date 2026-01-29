@@ -2,7 +2,7 @@ mod token;
 mod value;
 mod params;
 mod cursor;
-mod selector;
+pub mod selector;
 
 use token::Token;
 use cursor::TokenCursor;
@@ -15,7 +15,7 @@ use crate::cursor::{CursorSpan, SplitCursor};
 
 pub use value::*;
 pub use params::*;
-use crate::selector::{Selector, SelectorParseError, SelectorParser};
+use crate::selector::{PseudoState, Selector, SelectorParseError, SelectorParser};
 // pub use selector::*;
 
 pub type Cursor<'a> = TokenCursor<'a,Token<'a>>;
@@ -44,8 +44,8 @@ impl ParseError {
         Self { span, kind:ParseErrorKind::InvalidCssValue }
     }
 
-    pub fn not_selector(span: CursorSpan) -> Self {
-        Self { span, kind:ParseErrorKind::InvalidCssSelector }
+    pub fn not_selector(span: CursorSpan, e:SelectorParseError) -> Self {
+        Self { span, kind:ParseErrorKind::InvalidCssSelector(e) }
     }
 
     pub fn expect_kv(span: CursorSpan) -> Self {
@@ -75,10 +75,6 @@ impl ParseError {
     pub fn invalid_relative_value(span: CursorSpan) -> Self {
         Self { span, kind:ParseErrorKind::InvalidRelativeValue }
     }
-
-    pub fn invalid_selector(span: CursorSpan) -> Self {
-        Self { span, kind:ParseErrorKind::InvalidCssSelector }
-    }
 }
 
 
@@ -90,11 +86,11 @@ pub enum ParseErrorKind {
     #[error("expected a value. e.g. myident, Component(), 123, 123.456, \"mytext..\", [4,5,], {{key=value}}, true, false, #ff0000")]
     ExpectValue,
 
-    #[error("invalid CSS value. e.g. 123px, 1.0em, 123.456, \"mytext..\", true, false, #ff0000")]
+    #[error("invalid CSS value.  e.g. 123px, 1.0em, 123.456, \"mytext..\", true, false, #ff0000")]
     InvalidCssValue,
 
-    #[error("invalid CSS selector. e.g. #myid, .myclass, TagName")]
-    InvalidCssSelector,
+    #[error("invalid CSS selector.({0}) e.g. #myid, .myclass, TagName")]
+    InvalidCssSelector(SelectorParseError),
 
     #[error("expected a key-value pair. e.g. key=value,key2=value2")]
     ExpectKeyValue,
@@ -118,7 +114,7 @@ pub enum ParseErrorKind {
     InvalidRelativeValue,
 }
 
-#[derive(Default, Debug, PartialEq, Clone)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub enum CssKeyword {
     #[default]
     Auto,
@@ -126,7 +122,7 @@ pub enum CssKeyword {
     Inherit,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CssValue<'a> {
     Keyword(CssKeyword),
     Px(f64),
@@ -137,6 +133,16 @@ pub enum CssValue<'a> {
     HexColor(&'a str),
     Rgba( (u8,u8,u8,u8) ),
     Rgb( (u8,u8,u8) ),
+}
+
+impl <'a> CssValue<'a> {
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Px(x) => Some(*x),
+            Self::Number(x) => Some(*x),
+            _ => None,
+        }
+    }
 }
 
 impl <'a> Default for CssValue<'a> {
@@ -184,6 +190,15 @@ pub struct StyleProperty<'a> {
     pub values: ArrayVec<[CssValue<'a>;5]>,
 }
 
+impl StyleProperty<'_> {
+    pub fn as_f64(&self) -> Option<f64> {
+        match self.values.get(0) {
+            Some(v) => v.as_f64(),
+            _ => None,
+        }
+    }
+}
+
 impl <'a> Default for StyleProperty<'a> {
     fn default() -> Self { StyleProperty { key: "", values: ArrayVec::default() } }
 }
@@ -207,6 +222,23 @@ pub struct Component<'a> {
     pub properties: HashMap<&'a str, Value<'a>>,
 }
 
+impl <'a> Component<'a> {
+    pub fn find<'b>(&'a self, parents:&'b mut Vec<&'a Component<'a>>, target:&'a Component<'a>) -> bool {
+        if std::ptr::eq(self, target) {
+            true
+        } else {
+            parents.push(self);
+            for child in self.children.iter() {
+                if child.find(parents, target) {
+                    return true;
+                }
+            }
+            parents.pop();
+            false
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RootComponent<'a> {
     pub name: &'a str,
@@ -220,6 +252,9 @@ pub struct SKUI<'a> {
 }
 
 impl <'a> SKUI <'a> {
+    pub fn get_main_component(&self) -> Option<&RootComponent<'a>> {
+        self.get_root_component("Main")
+    }
 
     pub fn get_root_component(&self, name:&str) -> Option<&RootComponent<'a>> {
         self.components.iter().find(|rc| rc.name == name)
@@ -241,6 +276,32 @@ impl <'a> SKUI <'a> {
                     && targets.iter().find( |&&s| s == rc.component.name ).is_some()
                     ).map( |rc| &rc.component);
         item_wrap.unwrap_or( c )
+    }
+
+    // pub fn find_component<'b>(parents:&'b mut Vec<&'a Component<'a>>, comp:&'a Component<'a>, target:&'a Component<'a>) -> bool {
+    //     if std::ptr::eq(comp, target) {
+    //         true
+    //     } else {
+    //         parents.push(comp);
+    //         for child in comp.children.iter() {
+    //             if Self::find_component(parents, child, target) {
+    //                 return true;
+    //             }
+    //         }
+    //         parents.pop();
+    //         false
+    //     }
+    // }
+
+    pub fn get_styles<'b>(&self, parents:&'b [&'a Component<'a>], c:&'a Component<'a>) -> impl Iterator<Item=&Style<'a>> {
+
+        // let root = self.get_main_component().unwrap();
+        // let mut curr = &root.component;
+        // let mut parents = vec![];
+        // Self::find_comp(&mut parents, &root.component, c);
+
+        self.styles.iter()
+            .filter( move |e| e.selector.is_matches(parents, c, PseudoState::default()) )
     }
 }
 
@@ -477,7 +538,6 @@ pub fn parse_tokens<'a>( tks:&'a TokenAndSpan<'a> ) -> Result<(Vec<Style<'a>>,Ve
 
     while !cursor.is_eof() {
         //raw to trimmed for Component
-        cursor = tks.trimmed_cursor(cursor);
         if let (_, [Token::Ident(name), Token::Colon, Token::Ident(_), Token::LParen], ) = cursor.fork().consume() {
             let component;
             (cursor, component) = parse_component( cursor.fork().skip(2) )?;
@@ -489,12 +549,16 @@ pub fn parse_tokens<'a>( tks:&'a TokenAndSpan<'a> ) -> Result<(Vec<Style<'a>>,Ve
         cursor = tks.raw_cursor(cursor);
         let span = cursor.span();
         let selector;
-        (cursor, selector) = SelectorParser::parse(cursor).map_err(|_| ParseError::unknown_start(span))?;
+        (cursor, selector) = SelectorParser::parse(cursor).map_err(|e| ParseError::not_selector(span,e) )?;
 
         //trimmed to raw for style item
         cursor = tks.trimmed_cursor(cursor);
         let span = cursor.span();
-        parse_style_item(selector, cursor)?;
+        let style;
+        (cursor,style) = parse_style_item(selector, cursor)?;
+        styles.push(style);
+        cursor = tks.trimmed_cursor(cursor);
+        continue;
 
         // let mut check_fork = cursor.fork();
         // let is_style_item = take_match!(check_fork,
@@ -512,7 +576,7 @@ pub fn parse_tokens<'a>( tks:&'a TokenAndSpan<'a> ) -> Result<(Vec<Style<'a>>,Ve
         // }
 
         //Error
-        return Err(ParseError::unknown_start(span));
+        //return Err(ParseError::unknown_start(span));
     }
     Ok( (styles, root_components) )
 }
@@ -557,8 +621,9 @@ impl <'a> TokenAndSpan<'a> {
                 tidx += 1;
             }
         }
+        //cut_off + 1로 하여 두 커서가 공존할 수 없게 함
         Self {
-            cut_off:tokens.len(), tokens, idxs, trimmed_tokens, trimmed_idxs, spans
+            cut_off:tokens.len() + 1, tokens, idxs, trimmed_tokens, trimmed_idxs, spans
         }
     }
 
@@ -567,10 +632,8 @@ impl <'a> TokenAndSpan<'a> {
     }
 
     pub fn trimmed_cursor<'b>(&'b self, cursor:Cursor<'b>) -> Cursor<'b> {
-        //raw to trimmed
-        if cursor.idx() < self.cut_off {
-            let slice_idx = cursor.idx();
-            let mirror_trimmed_idx = self.idxs[slice_idx];
+        if cursor.idx() < self.cut_off && !cursor.is_eof() { //this cursor raw cursor
+            let mirror_trimmed_idx = self.idxs[cursor.idx()];
             Cursor::new_offset( &self.trimmed_tokens[ mirror_trimmed_idx .. ], mirror_trimmed_idx + self.cut_off )
         } else {
             cursor
@@ -578,8 +641,7 @@ impl <'a> TokenAndSpan<'a> {
     }
 
     pub fn raw_cursor<'b>(&'b self, cursor:Cursor<'b>) -> Cursor<'b> {
-        //trimmed to raw
-        if cursor.idx() >= self.cut_off {
+        if cursor.idx() >= self.cut_off && !cursor.is_eof() { //this cursor is trimmed cursor
             let slice_idx = cursor.idx() - self.cut_off;
             let mirror_raw_idx = self.trimmed_idxs[slice_idx];
             Cursor::new_offset( &self.tokens[ mirror_raw_idx .. ], mirror_raw_idx )
@@ -684,11 +746,12 @@ impl <'a> TokenAndSpan<'a> {
 
 
 fn parse<'a>(tks: &'a TokenAndSpan) -> Result<SKUI<'a>, SKUIParseError> {
+
     match parse_tokens( &tks ) {
         Ok( (styles, components) ) => Ok( SKUI { styles, components } ),
         Err(e) => {
             Err( SKUIParseError {
-                span : tks.spans[ e.span.idx() ].clone(),
+                span : tks.span( e.span.idx() ).clone(),
                 kind : e,
             })
         },
@@ -700,6 +763,29 @@ fn parse<'a>(tks: &'a TokenAndSpan) -> Result<SKUI<'a>, SKUIParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tks() {
+        let str = " abcd 1234 { } ";
+        let tks = TokenAndSpan::new( str );
+        println!("initial : {:?}", TokenCursor::new(&tks.tokens));
+
+        let mut cursor = tks.start_cursor();
+
+        println!("start : {:?}", cursor);
+
+        (cursor,_) = cursor.consume::<1>();
+
+        cursor = tks.raw_cursor( cursor );
+        println!("consume 1 and raw : {:?}", cursor);
+
+        (cursor,_) = cursor.consume::<2>();
+        cursor = tks.trimmed_cursor(cursor);
+        println!("consume 2 and trimmed : {:?}", cursor);
+
+        cursor = tks.raw_cursor(cursor );
+        println!("just raw : {:?}", cursor);
+    }
 
     #[test]
     fn test_parse() {

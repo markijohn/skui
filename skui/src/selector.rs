@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use crate::Component;
 use crate::cursor::TokenCursor;
 use crate::token::Token;
@@ -94,6 +95,14 @@ impl<'a> SimpleSelector<'a> {
         self
     }
 
+    pub fn get_pseudo_class(&self) -> Option<&PseudoClass> {
+        self.pseudo_class.as_ref()
+    }
+
+    pub fn has_pseudo_class(&self) -> bool {
+        self.pseudo_class.is_some()
+    }
+
     pub fn is_matches(&self, element: &Component<'a>, state:PseudoState) -> bool {
         // 모든 SelectorKind 매칭 (AND)
         for kind in &self.kinds {
@@ -121,10 +130,74 @@ impl<'a> SimpleSelector<'a> {
         // }
         true
     }
+
+
 }
 
 impl<'a> Selector<'a> {
-    fn is_matches(&self, parents:&[Component<'a>], element: &Component<'a>, state:PseudoState) -> bool {
+    /// Selector에서 PseudoClass를 가져옵니다.
+    /// 복합 선택자의 경우 가장 오른쪽(마지막) 선택자의 PseudoClass를 반환합니다.
+    pub fn get_pseudo_class(&self) -> Option<&PseudoClass> {
+        match self {
+            // 단일 선택자: SimpleSelector의 pseudo_class 반환
+            Selector::Simple(simple) => simple.pseudo_class.as_ref(),
+
+            // 그룹 선택자: 첫 번째 선택자의 pseudo_class 반환
+            // (OR 조건이므로 각각 개별적으로 처리해야 할 수도 있음)
+            Selector::Group(selectors) => {
+                selectors.first().and_then(|s| s.get_pseudo_class())
+            }
+
+            // 자손/자식 선택자: 오른쪽(마지막) 선택자의 pseudo_class 반환
+            // 예: .container .button:hover -> :hover 반환
+            Selector::Descendant(_, right) | Selector::Child(_, right) => {
+                right.get_pseudo_class()
+            }
+        }
+    }
+
+    /// Selector에서 모든 PseudoClass를 수집합니다.
+    pub fn collect_pseudo_classes(&self) -> Vec<&PseudoClass> {
+        match self {
+            Selector::Simple(simple) => {
+                simple.pseudo_class.as_ref().into_iter().collect()
+            }
+
+            Selector::Group(selectors) => {
+                selectors
+                    .iter()
+                    .flat_map(|s| s.collect_pseudo_classes())
+                    .collect()
+            }
+
+            Selector::Descendant(left, right) | Selector::Child(left, right) => {
+                let mut result = left.collect_pseudo_classes();
+                result.extend(right.collect_pseudo_classes());
+                result
+            }
+        }
+    }
+
+    /// 특정 PseudoClass를 포함하는지 확인합니다.
+    pub fn has_pseudo_class(&self, target: &PseudoClass) -> bool {
+        match self {
+            Selector::Simple(simple) => {
+                simple.pseudo_class.as_ref() == Some(target)
+            }
+
+            Selector::Group(selectors) => {
+                selectors.iter().any(|s| s.has_pseudo_class(target))
+            }
+
+            Selector::Descendant(left, right) | Selector::Child(left, right) => {
+                left.has_pseudo_class(target) || right.has_pseudo_class(target)
+            }
+        }
+    }
+
+
+
+    pub fn is_matches(&self, parents:&[&Component<'a>], element: &Component<'a>, state:PseudoState) -> bool {
         match self {
             Selector::Simple(simple) => simple.is_matches(element, state),
 
@@ -183,11 +256,17 @@ impl<'a> Selector<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum SelectorParseError {
     UnexpectedToken(String),
     UnexpectedEnd,
     EmptySelector,
+}
+
+impl Display for SelectorParseError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 pub struct SelectorParser;
