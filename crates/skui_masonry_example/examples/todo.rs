@@ -11,7 +11,7 @@ use masonry::widgets::{Button, ButtonPress, Flex, Label, Portal, TextAction, Tex
 use masonry_testing::TestHarness;
 use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
-use skui::{render_error, Parameters, SKUIParseError, TokensAndSpan, SKUI};
+use skui::{Parameters, SKUIParseError, TokenAndSpan, SKUI};
 //mod builder;
 use skui_masonry_example::{DefaultWidgetBuilder, RootWidgetBuilder};
 use skui_masonry_example::params::ParamsStack;
@@ -110,7 +110,7 @@ pub fn make_widget_tree() -> NewWidget<impl Widget + ?Sized> {
 }
 
 fn build_widget(src:&str) -> NewWidget<impl Widget + ?Sized> {
-    let tks = TokensAndSpan::new(src);
+    let tks = TokenAndSpan::new(src);
     match SKUI::parse(&tks) {
         Ok(skui) => {
             let parameters = Parameters::empty();
@@ -122,7 +122,7 @@ fn build_widget(src:&str) -> NewWidget<impl Widget + ?Sized> {
             }
         }
         Err( e ) => {
-            let text = format!("{e:#?}\n{}", render_error(src, e.span.clone(),3));
+            let text = format!("{e:#?}\n{}", tks.render_error_from_span(src, e.span.clone(),3));
             NewWidget::new( Label::new( text ) ).erased()
         }
     }

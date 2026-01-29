@@ -1,17 +1,17 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use logos::Span;
-use skui::{parse_tokens, tokenize_from_str, TokensAndSpan, SKUI};
+use skui::{TokenAndSpan, SKUI};
 
 // fn parse(src: &str) -> SKUI {
 //     SKUI::parse(src).unwrap()
 // }
 
 fn parse(src:&str) -> bool {
-    let tks = TokensAndSpan::new( src );
+    let tks = TokenAndSpan::new( src );
     SKUI::parse(&tks).is_ok()
 }
 
-fn parse_tks( tks:&TokensAndSpan ) -> bool {
+fn parse_tks(tks:&TokenAndSpan) -> bool {
     SKUI::parse(&tks).is_ok()
 }
 

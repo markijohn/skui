@@ -1,4 +1,5 @@
 use crate::Component;
+use crate::cursor::TokenCursor;
 use crate::token::Token;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -174,120 +175,141 @@ impl<'a> Selector<'a> {
         Selector::Child(Box::new(parent), Box::new(child))
     }
 
-    pub fn parse_selector(tokens: Vec<Token<'a>>) -> Result<Selector<'a>, ParseError> {
-        SelectorParser::new(tokens).parse()
-    }
-
-    pub fn parse_from_str(selector_str: &'a str) -> Result<Selector<'a>, ParseError> {
-        let tokens = crate::TokensAndSpan::new(selector_str).tokens;
-        Self::parse_selector(tokens)
+    pub fn parse_from_token(tks:&'a crate::TokenAndSpan) -> Result<Selector<'a> , SelectorParseError> {
+        //let tks = crate::TokenAndSpan::new(selector_str).tokens;
+        let cursor = TokenCursor::new( &tks.tokens );
+        //Self::parse_from_token( cursor ).map(|(_,sel)| sel)
+        SelectorParser::parse( cursor ).map( move |(_,sel)| sel)
     }
 }
 
 #[derive(Debug)]
-pub enum ParseError {
+pub enum SelectorParseError {
     UnexpectedToken(String),
     UnexpectedEnd,
     EmptySelector,
 }
 
-pub struct SelectorParser<'a> {
-    tokens: Vec<Token<'a>>,
-    pos: usize,
-}
+pub struct SelectorParser;
 
-impl<'a> SelectorParser<'a> {
-    pub fn new(tokens: Vec<Token<'a>>) -> Self {
-        Self { tokens, pos: 0 }
-    }
+impl SelectorParser {
+    pub fn parse<'a>(cursor: TokenCursor<'a, Token<'a>>) -> Result<(TokenCursor<'a, Token<'a>>, Selector<'a>), SelectorParseError> {
+        // 앞의 WHITESPACE 건너뛰기
+        let cursor = Self::skip_whitespace(cursor);
 
-    pub fn parse(mut self) -> Result<Selector<'a>, ParseError> {
-        self.parse_selector_group()
+        let (cursor, selector) = Self::parse_selector_group(cursor)?;
+
+        // LBrace로 끝나는지 확인
+        let (_, token) = cursor.fork().consume_one();
+        if token != Token::LBrace {
+            return Err(SelectorParseError::UnexpectedToken(
+                format!("Expected LBrace, found {:?}", token)
+            ));
+        }
+
+        Ok((cursor, selector))
     }
 
     // Group 파싱: selector1, selector2, selector3
-    fn parse_selector_group(&mut self) -> Result<Selector<'a>, ParseError> {
-        let mut selectors = vec![self.parse_combinator_chain()?];
+    fn parse_selector_group<'a>(cursor: TokenCursor<'a, Token<'a>>) -> Result<(TokenCursor<'a, Token<'a>>, Selector<'a>), SelectorParseError> {
+        let (mut cursor, first) = Self::parse_combinator_chain(cursor)?;
+        let mut selectors = vec![first];
 
-        while self.peek() == Some(&Token::Comma) {
-            self.advance(); // consume comma
-            selectors.push(self.parse_combinator_chain()?);
+        loop {
+            let (next_cursor, token) = cursor.fork().consume_one();
+            if token == Token::Comma {
+                cursor = next_cursor;
+                cursor = Self::skip_whitespace(cursor); // 쉼표 뒤 공백 무시
+                let (next_cursor, selector) = Self::parse_combinator_chain(cursor)?;
+                cursor = next_cursor;
+                selectors.push(selector);
+            } else {
+                break;
+            }
         }
 
-        if !self.is_end() {
-            return Err(ParseError::UnexpectedToken(format!("{:?}", self.peek())));
-        }
-
-        if selectors.len() == 1 {
-            Ok(selectors.into_iter().next().unwrap())
+        let selector = if selectors.len() == 1 {
+            selectors.into_iter().next().unwrap()
         } else {
-            Ok(Selector::Group(selectors))
-        }
+            Selector::Group(selectors)
+        };
+
+        Ok((cursor, selector))
     }
 
     // Combinator 파싱: A > B, A B
-    fn parse_combinator_chain(&mut self) -> Result<Selector<'a>, ParseError> {
-        let mut left = self.parse_simple_selector()?;
+    fn parse_combinator_chain<'a>(cursor: TokenCursor<'a, Token<'a>>) -> Result<(TokenCursor<'a, Token<'a>>, Selector<'a>), SelectorParseError> {
+        let (mut cursor, mut left) = Self::parse_simple_selector(cursor)?;
 
         loop {
-            // 공백 (descendant) 또는 > (child)
-            match self.peek() {
-                Some(Token::Gt) => {
-                    self.advance(); // consume >
-                    let right = self.parse_simple_selector()?;
+            cursor = Self::skip_whitespace(cursor);
+
+            let (next_cursor, token) = cursor.fork().consume_one();
+
+            match token {
+                Token::Gt => {
+                    cursor = next_cursor;
+                    cursor = Self::skip_whitespace(cursor); // > 뒤 공백 무시
+                    let (next_cursor, right) = Self::parse_simple_selector(cursor)?;
+                    cursor = next_cursor;
                     left = Selector::Child(Box::new(left), Box::new(right));
                 }
-                Some(Token::Id(_)) | Some(Token::Class(_)) | Some(Token::Ident(_)) | Some(Token::Colon) => {
+                Token::Id(_) | Token::Class(_) | Token::Ident(_) | Token::Colon => {
                     // 공백으로 구분된 descendant (implicit)
-                    let right = self.parse_simple_selector()?;
+                    let (next_cursor, right) = Self::parse_simple_selector(cursor)?;
+                    cursor = next_cursor;
                     left = Selector::Descendant(Box::new(left), Box::new(right));
                 }
                 _ => break,
             }
         }
 
-        Ok(left)
+        Ok((cursor, left))
     }
 
     // Simple selector 파싱: button#id.class:hover
-    fn parse_simple_selector(&mut self) -> Result<Selector<'a>, ParseError> {
+    fn parse_simple_selector<'a>(cursor: TokenCursor<'a, Token<'a>>) -> Result<(TokenCursor<'a, Token<'a>>, Selector<'a>), SelectorParseError> {
         let mut simple = SimpleSelector::new();
         let mut has_any = false;
+        let mut cursor = cursor;
 
         // Tag, Id, Class를 순서 상관없이 파싱
         loop {
-            match self.peek() {
-                Some(Token::Ident(tag)) => {
+            let (next_cursor, token) = cursor.fork().consume_one();
+
+            match token {
+                Token::Ident(tag) => {
                     simple = simple.tag(tag);
-                    self.advance();
+                    cursor = next_cursor;
                     has_any = true;
                 }
-                Some(Token::Id(id)) => {
+                Token::Id(id) => {
                     simple = simple.id(id);
-                    self.advance();
+                    cursor = next_cursor;
                     has_any = true;
                 }
-                Some(Token::Class(class)) => {
+                Token::Class(class) => {
                     simple = simple.class(class);
-                    self.advance();
+                    cursor = next_cursor;
                     has_any = true;
                 }
-                Some(Token::Colon) => {
-                    self.advance(); // consume :
-                    if let Some(Token::Ident(pseudo)) = self.peek() {
-                        simple = match *pseudo {
+                Token::Colon => {
+                    cursor = next_cursor;
+                    let (next_cursor, pseudo_token) = cursor.consume_one();
+                    if let Token::Ident(pseudo) = pseudo_token {
+                        simple = match pseudo {
                             "hover" => simple.hover(),
                             "active" => simple.active(),
                             "focus" => simple.focus(),
                             "disabled" => simple.disabled(),
-                            _ => return Err(ParseError::UnexpectedToken(
+                            _ => return Err(SelectorParseError::UnexpectedToken(
                                 format!("Unknown pseudo-class: {}", pseudo)
                             )),
                         };
-                        self.advance();
+                        cursor = next_cursor;
                         has_any = true;
                     } else {
-                        return Err(ParseError::UnexpectedEnd);
+                        return Err(SelectorParseError::UnexpectedEnd);
                     }
                 }
                 _ => break,
@@ -295,25 +317,25 @@ impl<'a> SelectorParser<'a> {
         }
 
         if !has_any {
-            return Err(ParseError::EmptySelector);
+            return Err(SelectorParseError::EmptySelector);
         }
 
-        Ok(Selector::Simple(simple))
+        Ok((cursor, Selector::Simple(simple)))
     }
 
-    fn peek(&self) -> Option<&Token<'a>> {
-        self.tokens.get(self.pos)
-    }
-
-    fn advance(&mut self) {
-        self.pos += 1;
-    }
-
-    fn is_end(&self) -> bool {
-        self.pos >= self.tokens.len()
+    fn skip_whitespace<'a>(cursor: TokenCursor<'a, Token<'a>>) -> TokenCursor<'a, Token<'a>> {
+        let mut cursor = cursor;
+        loop {
+            let (next_cursor, token) = cursor.fork().consume_one();
+            if token == Token::Whitespace {
+                cursor = next_cursor;
+            } else {
+                break;
+            }
+        }
+        cursor
     }
 }
-
 // 편의 함수
 
 
@@ -321,13 +343,570 @@ impl<'a> SelectorParser<'a> {
 #[cfg(test)]
 mod tests {
     use tinyvec::ArrayVec;
-    use crate::{Parameters, TokensAndSpan};
+    use crate::{Parameters, TokenAndSpan};
     use super::*;
+    
+    fn test_case(test:&str, expected:Selector) {
+        let tks = TokenAndSpan::new(test);
+        let selector = Selector::parse_from_token(&tks).unwrap();
+        println!("Parsed ({test}) : {:?}", selector);
+        assert_eq!(selector, expected);
+    }
+    
+    #[test]
+    fn test_selectors() {
+        fn simple(kinds: Vec<SelectorKind>, pseudo: Option<PseudoClass>) -> Selector {
+            Selector::Simple(SimpleSelector {
+                kinds,
+                pseudo_class: pseudo,
+            })
+        }
+
+        fn tag(name: &str) -> SelectorKind {
+            SelectorKind::Tag(name)
+        }
+
+        fn id(name: &str) -> SelectorKind {
+            SelectorKind::Id(name)
+        }
+
+        fn class(name: &str) -> SelectorKind {
+            SelectorKind::Class(name)
+        }
+
+        // ============ Simple Selectors ============
+
+        // 1. Simple Tag Selector
+        test_case(
+            "button {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Tag("button")],
+                pseudo_class: None
+            })
+        );
+
+        // 2. Simple ID Selector
+        test_case(
+            "#submit {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Id("submit")],
+                pseudo_class: None
+            })
+        );
+
+        // 3. Simple Class Selector
+        test_case(
+            ".primary {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Class("primary")],
+                pseudo_class: None
+            })
+        );
+
+        // 4. Combined Tag + ID + Class
+        test_case(
+        "button#submit.primary {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![
+                    SelectorKind::Tag("button"),
+                    SelectorKind::Id("submit"),
+                    SelectorKind::Class("primary")
+                ],
+                pseudo_class: None
+            })
+        );
+
+        // 5. Multiple Classes
+        test_case(
+        ".btn.primary.large {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![
+                    SelectorKind::Class("btn"),
+                    SelectorKind::Class("primary"),
+                    SelectorKind::Class("large")
+                ],
+                pseudo_class: None
+            })
+        );
+
+        // 6. Tag + Multiple Classes
+        test_case(
+        "div.container.flex {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![
+                    SelectorKind::Tag("div"),
+                    SelectorKind::Class("container"),
+                    SelectorKind::Class("flex")
+                ],
+                pseudo_class: None
+            })
+        );
+
+        // 7. Single Pseudo-class
+        test_case(
+        "button:hover {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Tag("button")],
+                pseudo_class: Some(PseudoClass::Hover)
+            })
+        );
+
+        // 8. Pseudo-class with ID and Class
+        test_case(
+        "input#email.form-control:focus {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![
+                    SelectorKind::Tag("input"),
+                    SelectorKind::Id("email"),
+                    SelectorKind::Class("form-control")
+                ],
+                pseudo_class: Some(PseudoClass::Focus)
+            })
+        );
+
+        // 9. All Pseudo-classes
+        test_case(
+        "button:hover {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Tag("button")],
+                pseudo_class: Some(PseudoClass::Hover)
+            })
+        );
+
+        test_case(
+        "button:active {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Tag("button")],
+                pseudo_class: Some(PseudoClass::Active)
+            })
+        );
+
+        test_case(
+        "button:focus {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Tag("button")],
+                pseudo_class: Some(PseudoClass::Focus)
+            })
+        );
+
+        test_case(
+        "button:disabled {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Tag("button")],
+                pseudo_class: Some(PseudoClass::Disabled)
+            })
+        );
+
+        // ============ Descendant Combinators ============
+
+        // 10. Descendant Combinator (2 levels)
+        test_case(
+        "div button {",
+            Selector::Descendant(
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("div")],
+                    pseudo_class: None
+                })),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }))
+            )
+        );
+
+        // 11. Descendant Combinator (3 levels)
+        test_case(
+        "div section button {",
+            Selector::Descendant(
+                Box::new(Selector::Descendant(
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("div")],
+                        pseudo_class: None
+                    })),
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("section")],
+                        pseudo_class: None
+                    }))
+                )),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }))
+            )
+        );
+
+        // 12. Descendant with Classes
+        test_case(
+        ".container .btn {",
+            Selector::Descendant(
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Class("container")],
+                    pseudo_class: None
+                })),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Class("btn")],
+                    pseudo_class: None
+                }))
+            )
+        );
+
+        // ============ Child Combinators ============
+
+        // 13. Child Combinator
+        test_case(
+        "div > button {",
+            Selector::Child(
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("div")],
+                    pseudo_class: None
+                })),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }))
+            )
+        );
+
+        // 14. Multiple Child Combinators
+        test_case(
+        "div > section > button {",
+            Selector::Child(
+                Box::new(Selector::Child(
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("div")],
+                        pseudo_class: None
+                    })),
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("section")],
+                        pseudo_class: None
+                    }))
+                )),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }))
+            )
+        );
+
+        // ============ Mixed Combinators ============
+
+        // 15. Child then Descendant
+        test_case(
+        "div > section button {",
+            Selector::Descendant(
+                Box::new(Selector::Child(
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("div")],
+                        pseudo_class: None
+                    })),
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("section")],
+                        pseudo_class: None
+                    }))
+                )),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }))
+            )
+        );
+
+        // 16. Descendant then Child
+        test_case(
+        "div section > button {",
+            Selector::Child(
+                Box::new(Selector::Descendant(
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("div")],
+                        pseudo_class: None
+                    })),
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("section")],
+                        pseudo_class: None
+                    }))
+                )),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }))
+            )
+        );
+
+        // 17. Complex with Classes
+        test_case(
+        "div.container > button#submit.primary {",
+            Selector::Child(
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![
+                        SelectorKind::Tag("div"),
+                        SelectorKind::Class("container")
+                    ],
+                    pseudo_class: None
+                })),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![
+                        SelectorKind::Tag("button"),
+                        SelectorKind::Id("submit"),
+                        SelectorKind::Class("primary")
+                    ],
+                    pseudo_class: None
+                }))
+            )
+        );
+
+        // 18. With Pseudo-classes
+        test_case(
+        "div:hover > button:active {",
+            Selector::Child(
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("div")],
+                    pseudo_class: Some(PseudoClass::Hover)
+                })),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: Some(PseudoClass::Active)
+                }))
+            )
+        );
+
+        // ============ Selector Groups ============
+
+        // 19. Simple Group (2 selectors)
+        test_case(
+        "button, input {",
+            Selector::Group(vec![
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }),
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("input")],
+                    pseudo_class: None
+                })
+            ])
+        );
+
+        // 20. Simple Group (3 selectors)
+        test_case(
+        "h1, h2, h3 {",
+            Selector::Group(vec![
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("h1")],
+                    pseudo_class: None
+                }),
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("h2")],
+                    pseudo_class: None
+                }),
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("h3")],
+                    pseudo_class: None
+                })
+            ])
+        );
+
+        // 21. Group with Classes
+        test_case(
+        ".primary, .secondary, .tertiary {",
+            Selector::Group(vec![
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Class("primary")],
+                    pseudo_class: None
+                }),
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Class("secondary")],
+                    pseudo_class: None
+                }),
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Class("tertiary")],
+                    pseudo_class: None
+                })
+            ])
+        );
+
+        // 22. Group with Complex Selectors
+        test_case(
+        "div > button, .container input {",
+            Selector::Group(vec![
+                Selector::Child(
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("div")],
+                        pseudo_class: None
+                    })),
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("button")],
+                        pseudo_class: None
+                    }))
+                ),
+                Selector::Descendant(
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Class("container")],
+                        pseudo_class: None
+                    })),
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("input")],
+                        pseudo_class: None
+                    }))
+                )
+            ])
+        );
+
+        // 23. Group with All Types
+        test_case(
+        "button, div > span, .class#id:hover {",
+            Selector::Group(vec![
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }),
+                Selector::Child(
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("div")],
+                        pseudo_class: None
+                    })),
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("span")],
+                        pseudo_class: None
+                    }))
+                ),
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![
+                        SelectorKind::Class("class"),
+                        SelectorKind::Id("id")
+                    ],
+                    pseudo_class: Some(PseudoClass::Hover)
+                })
+            ])
+        );
+
+        // ============ Whitespace Handling ============
+
+        // 24. Leading Whitespace
+        test_case(
+        "   button {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Tag("button")],
+                pseudo_class: None
+            })
+        );
+
+        // 25. Whitespace Around Child Combinator
+        test_case(
+        "div  >  button {",
+            Selector::Child(
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("div")],
+                    pseudo_class: None
+                })),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }))
+            )
+        );
+
+        // 26. Whitespace Around Comma
+        test_case(
+        "button  ,  input {",
+            Selector::Group(vec![
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("button")],
+                    pseudo_class: None
+                }),
+                Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("input")],
+                    pseudo_class: None
+                })
+            ])
+        );
+
+        // ============ Complex Real-world Examples ============
+
+        // 27. Complex Example 1
+        test_case(
+        "div.container > button#submit.btn.primary:hover {",
+            Selector::Child(
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![
+                        SelectorKind::Tag("div"),
+                        SelectorKind::Class("container")
+                    ],
+                    pseudo_class: None
+                })),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![
+                        SelectorKind::Tag("button"),
+                        SelectorKind::Id("submit"),
+                        SelectorKind::Class("btn"),
+                        SelectorKind::Class("primary")
+                    ],
+                    pseudo_class: Some(PseudoClass::Hover)
+                }))
+            )
+        );
+
+        // 28. Complex Example 2 - Deep Nesting
+        test_case(
+        ".sidebar nav > ul li a:active {",
+            Selector::Descendant(
+                Box::new(Selector::Descendant(
+                    Box::new(Selector::Child(
+                        Box::new(Selector::Descendant(
+                            Box::new(Selector::Simple(SimpleSelector {
+                                kinds: vec![SelectorKind::Class("sidebar")],
+                                pseudo_class: None
+                            })),
+                            Box::new(Selector::Simple(SimpleSelector {
+                                kinds: vec![SelectorKind::Tag("nav")],
+                                pseudo_class: None
+                            }))
+                        )),
+                        Box::new(Selector::Simple(SimpleSelector {
+                            kinds: vec![SelectorKind::Tag("ul")],
+                            pseudo_class: None
+                        }))
+                    )),
+                    Box::new(Selector::Simple(SimpleSelector {
+                        kinds: vec![SelectorKind::Tag("li")],
+                        pseudo_class: None
+                    }))
+                )),
+                Box::new(Selector::Simple(SimpleSelector {
+                    kinds: vec![SelectorKind::Tag("a")],
+                    pseudo_class: Some(PseudoClass::Active)
+                }))
+            )
+        );
+
+        // 29. Only ID
+        test_case(
+        "#main {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![SelectorKind::Id("main")],
+                pseudo_class: None
+            })
+        );
+
+        // 30. ID + Multiple Classes
+        test_case(
+        "#header.sticky.top {",
+            Selector::Simple(SimpleSelector {
+                kinds: vec![
+                    SelectorKind::Id("header"),
+                    SelectorKind::Class("sticky"),
+                    SelectorKind::Class("top")
+                ],
+                pseudo_class: None
+            })
+        );
+    }
+    
 
     #[test]
-    fn test_basic() {
-        let sel_str = "button#submit.primary:hover";
-        let selector = Selector::parse_from_str(sel_str).unwrap();
+    fn test_match() {
+        let sel_str = "button#submit.primary:hover {";
+        let tks = TokenAndSpan::new(sel_str);
+        let selector = Selector::parse_from_token(&tks).unwrap();
         let mut classes = ArrayVec::<[&'static str;5]>::new();
         classes.push("primary");
         let comp = Component {
@@ -338,8 +917,10 @@ mod tests {
             children: vec![],
             properties: Default::default(),
         };
-
+        
         println!("is_match? : {}", selector.is_matches(&[], &comp, PseudoState::default() ) );
+        
+        
     }
 
 

@@ -15,6 +15,7 @@ use crate::cursor::{CursorSpan, SplitCursor};
 
 pub use value::*;
 pub use params::*;
+use crate::selector::{Selector, SelectorParseError, SelectorParser};
 // pub use selector::*;
 
 pub type Cursor<'a> = TokenCursor<'a,Token<'a>>;
@@ -73,6 +74,10 @@ impl ParseError {
 
     pub fn invalid_relative_value(span: CursorSpan) -> Self {
         Self { span, kind:ParseErrorKind::InvalidRelativeValue }
+    }
+
+    pub fn invalid_selector(span: CursorSpan) -> Self {
+        Self { span, kind:ParseErrorKind::InvalidCssSelector }
     }
 }
 
@@ -162,13 +167,12 @@ impl <'a> TryFrom< (CursorSpan, Token<'a>) > for CssValue<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Selector<'a> {
+pub enum ComponentIdent<'a> {
     Id(&'a str),
     Class(&'a str),
-    Tag(&'a str),
 }
 
-impl Default for Selector<'_> {
+impl Default for ComponentIdent<'_> {
     fn default() -> Self {
         Self::Id("")
     }
@@ -186,7 +190,8 @@ impl <'a> Default for StyleProperty<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Style<'a> {
-    pub selector: ArrayVec<[Selector<'a>;5]>,
+    //pub selector: ArrayVec<[Selector<'a>;5]>,
+    pub selector: Selector<'a>,
     pub properties: ArrayVec<[StyleProperty<'a>;10]>,
 }
 
@@ -219,7 +224,7 @@ impl <'a> SKUI <'a> {
     pub fn get_root_component(&self, name:&str) -> Option<&RootComponent<'a>> {
         self.components.iter().find(|rc| rc.name == name)
     }
-    pub fn parse( tks: &'a TokensAndSpan) -> Result<Self, SKUIParseError> {
+    pub fn parse(tks: &'a TokenAndSpan) -> Result<Self, SKUIParseError> {
         parse(tks).map_err(|e| SKUIParseError { span: e.span, kind: e.kind })
     }
 
@@ -262,23 +267,23 @@ fn parse_style_inner_properties(cursor: Cursor) -> Result< ArrayVec<[StyleProper
     Ok( styles )
 }
 
-fn parse_def_selectors(cursor:Cursor) -> CursorResult<ArrayVec<[Selector;5]>> {
-    let Some(SplitCursor{next, result}) = cursor.fork().split_until( |t| t == Token::LBrace )
-    else { return Err(ParseError::expect_brace_block(cursor.span())) };
-    let (_,selectors) = result.consume_collect_until_arrayvec::<5,_,_>( |mut c| {
-        let v = take_match!(c,
-            [Token::Id(s)] => Selector::Id(s),
-            [Token::Class(s)] => Selector::Class(s),
-            [Token::Ident(s)] => Selector::Tag(s),
-            _ => return Ok( (c,None) )
-        );
-        Ok( (c,Some(v)) )
-    })?;
-    Ok( (next,selectors) )
-}
+// fn parse_def_selectors(cursor:Cursor) -> CursorResult<ArrayVec<[Selector;5]>> {
+//     let Some(SplitCursor{next, result}) = cursor.fork().split_until( |t| t == Token::LBrace )
+//     else { return Err(ParseError::expect_brace_block(cursor.span())) };
+//     let (_,selectors) = result.consume_collect_until_arrayvec::<5,_,_>( |mut c| {
+//         let v = take_match!(c,
+//             [Token::Id(s)] => Selector::Id(s),
+//             [Token::Class(s)] => Selector::Class(s),
+//             [Token::Ident(s)] => Selector::Tag(s),
+//             _ => return Ok( (c,None) )
+//         );
+//         Ok( (c,Some(v)) )
+//     })?;
+//     Ok( (next,selectors) )
+// }
 
-fn parse_style_item<'a>(cursor:Cursor<'a>) -> CursorResult<Style> {
-    let (cursor,selector) = parse_def_selectors(cursor)?;
+fn parse_style_item<'a>(selector: Selector<'a>, cursor:Cursor<'a>) -> CursorResult<'a, Style<'a>> {
+    //let (cursor,selector) = parse_def_selectors(cursor)?;
     let span = cursor.span();
     let SplitCursor{next:cursor, result:block} = cursor.consume_delimited_inner( Token::block_brace() ).ok_or_else(|| ParseError::expect_brace_block(span))?;
     let properties = parse_style_inner_properties( block )?;
@@ -349,12 +354,10 @@ fn parse_value(cursor:Cursor) -> CursorResult<Value> {
 
 fn parse_inner_parameters(cursor:Cursor) -> Result<Parameters> {
     if cursor.is_eof() {
-        //Ok( Parameters::Args( ArrayVec::<[Value;7]>::default() ) )
         Ok(Parameters::Args(Vec::new()))
     } else if let Ok( map ) = parse_inner_map(cursor.fork()) {
         Ok( Parameters::Map(map) )
     } else if let Ok( arr ) = parse_inner_array(cursor.fork()) {
-        //Ok( Parameters::Args( ArrayVec::<[Value;7]>::default() ) )
         Ok( Parameters::Args( arr ) )
     } else {
         Err( ParseError::not_parameter( cursor.span() ) )
@@ -374,8 +377,8 @@ fn parse_component<'a>(cursor:Cursor<'a>) -> CursorResult<Component> {
     let (mut cursor,selectors) = cursor.consume_collect_until( |cursor| {
         let (c, token) = cursor.fork().consume_one();
         match token {
-            Token::Id(id) => Ok( (c,Some( Selector::Id(id) ) ) ),
-            Token::Class(cls) => Ok( (c,Some( Selector::Class(cls) ) ) ),
+            Token::Id(id) => Ok( (c,Some( ComponentIdent::Id(id) ) ) ),
+            Token::Class(cls) => Ok( (c,Some( ComponentIdent::Class(cls) ) ) ),
             _ => Ok( (cursor,None) )
         }
     })?;
@@ -384,13 +387,13 @@ fn parse_component<'a>(cursor:Cursor<'a>) -> CursorResult<Component> {
     let mut classes = ArrayVec::<[&str;5]>::new();
     for s in selectors.into_iter() {
         match s {
-            Selector::Id(identify) => {
+            ComponentIdent::Id(identify) => {
                 if id.is_some() {
                     return Err(ParseError::id_already_defined(span))
                 }
                 id = Some(identify)
             },
-            Selector::Class(cls) => {
+            ComponentIdent::Class(cls) => {
                 classes.push(cls)
             },
             _ => unreachable!()
@@ -432,12 +435,49 @@ fn parse_component<'a>(cursor:Cursor<'a>) -> CursorResult<Component> {
     })
 }
 
-pub fn parse_tokens<'a>( tokens: &'a [Token<'a>] ) -> Result<(Vec<Style<'a>>,Vec<RootComponent<'a>>)> {
-    let mut cursor = Cursor::new( tokens );
+// pub fn parse_tokens<'a>( tokens: &'a [Token<'a>] ) -> Result<(Vec<Style<'a>>,Vec<RootComponent<'a>>)> {
+//     let mut cursor = Cursor::new( tokens );
+//     let mut styles = vec![];
+//     let mut root_components = vec![];
+//
+//     while !cursor.is_eof() {
+//         if let (_, [Token::Ident(name), Token::Colon, Token::Ident(_), Token::LParen], ) = cursor.fork().consume() {
+//             let component;
+//             (cursor, component) = parse_component( cursor.fork().skip(2) )?;
+//             root_components.push(RootComponent{name, component});
+//             continue;
+//         }
+//
+//         let mut check_fork = cursor.fork();
+//         let is_style_item = take_match!(check_fork,
+//             [Token::Id(_)] => true,
+//             [Token::Class(_)] => true,
+//             [Token::Ident(_), Token::LParen] => false,
+//             [Token::Ident(_)] => true,
+//             _ => false
+//         );
+//         if is_style_item {
+//             let style;
+//             (cursor, style) = parse_style_item(cursor)?;
+//             styles.push(style);
+//             continue;
+//         }
+//
+//         //Error
+//         return Err(ParseError::unknown_start(cursor.span()));
+//     }
+//     Ok( (styles, root_components) )
+// }
+
+pub fn parse_tokens<'a>( tks:&'a TokenAndSpan<'a> ) -> Result<(Vec<Style<'a>>,Vec<RootComponent<'a>>)> {
+    let cut_off = tks.tokens.len();
+    let mut cursor = tks.start_cursor();
     let mut styles = vec![];
     let mut root_components = vec![];
 
     while !cursor.is_eof() {
+        //raw to trimmed for Component
+        cursor = tks.trimmed_cursor(cursor);
         if let (_, [Token::Ident(name), Token::Colon, Token::Ident(_), Token::LParen], ) = cursor.fork().consume() {
             let component;
             (cursor, component) = parse_component( cursor.fork().skip(2) )?;
@@ -445,25 +485,34 @@ pub fn parse_tokens<'a>( tokens: &'a [Token<'a>] ) -> Result<(Vec<Style<'a>>,Vec
             continue;
         }
 
-        let mut check_fork = cursor.fork();
-        let is_style_item = take_match!(check_fork,
-            [Token::Id(_)] => true,
-            [Token::Class(_)] => true,
-            [Token::Ident(_), Token::LParen] => false,
-            [Token::Ident(_)] => true,
-            _ => false
-        );
-        if is_style_item {
-            let style;
-            (cursor, style) = parse_style_item(cursor)?;
-            styles.push(style);
-            continue;
-        }
+        //trimmed to raw for selector
+        cursor = tks.raw_cursor(cursor);
+        let span = cursor.span();
+        let selector;
+        (cursor, selector) = SelectorParser::parse(cursor).map_err(|_| ParseError::unknown_start(span))?;
 
+        //trimmed to raw for style item
+        cursor = tks.trimmed_cursor(cursor);
+        let span = cursor.span();
+        parse_style_item(selector, cursor)?;
 
+        // let mut check_fork = cursor.fork();
+        // let is_style_item = take_match!(check_fork,
+        //     [Token::Id(_)] => true,
+        //     [Token::Class(_)] => true,
+        //     [Token::Ident(_), Token::LParen] => false,
+        //     [Token::Ident(_)] => true,
+        //     _ => false
+        // );
+        // if is_style_item {
+        //     let style;
+        //     (cursor, style) = parse_style_item(cursor)?;
+        //     styles.push(style);
+        //     continue;
+        // }
 
         //Error
-        return Err(ParseError::unknown_start(cursor.span()));
+        return Err(ParseError::unknown_start(span));
     }
     Ok( (styles, root_components) )
 }
@@ -474,30 +523,168 @@ pub struct SKUIParseError {
     pub span: Span,
 }
 
-pub struct TokensAndSpan<'a> {
-    pub tokens: Vec<Token<'a>>,
-    pub spans: Vec<Span>
+pub struct TokenAndSpan<'a> {
+    cut_off: usize,
+
+    tokens: Vec<Token<'a>>,
+    idxs: Vec<usize>,
+
+    trimmed_tokens: Vec<Token<'a>>,
+    trimmed_idxs: Vec<usize>,
+
+    spans: Vec<Span>
 }
 
-impl <'a> TokensAndSpan<'a> {
+impl <'a> TokenAndSpan<'a> {
     pub fn new(src:&'a str) -> Self {
-        let (tokens, spans) = tokenize_from_str(src);
-        Self { tokens, spans }
+        let mut trimmed_tokens = Vec::new();
+        let mut trimmed_idxs = Vec::new();
+        let mut idxs = Vec::new();
+        let mut tokens = Vec::new();
+        let mut spans = Vec::new();
+
+        let mut tidx = 0;
+        for (idx,(token,span)) in Token::lexer(src)
+            .spanned()
+            .filter_map(| (t,s) | t.map( |v| (v,s) ).ok() )
+            .enumerate() {
+            idxs.push( tidx );
+            tokens.push(token);
+            spans.push(span);
+            if token != Token::Whitespace {
+                trimmed_tokens.push(token);
+                trimmed_idxs.push(idx);
+                tidx += 1;
+            }
+        }
+        Self {
+            cut_off:tokens.len(), tokens, idxs, trimmed_tokens, trimmed_idxs, spans
+        }
+    }
+
+    pub fn start_cursor(&self) -> Cursor {
+        Cursor::new_offset( &self.trimmed_tokens[..], self.cut_off )
+    }
+
+    pub fn trimmed_cursor<'b>(&'b self, cursor:Cursor<'b>) -> Cursor<'b> {
+        //raw to trimmed
+        if cursor.idx() < self.cut_off {
+            let slice_idx = cursor.idx();
+            let mirror_trimmed_idx = self.idxs[slice_idx];
+            Cursor::new_offset( &self.trimmed_tokens[ mirror_trimmed_idx .. ], mirror_trimmed_idx + self.cut_off )
+        } else {
+            cursor
+        }
+    }
+
+    pub fn raw_cursor<'b>(&'b self, cursor:Cursor<'b>) -> Cursor<'b> {
+        //trimmed to raw
+        if cursor.idx() >= self.cut_off {
+            let slice_idx = cursor.idx() - self.cut_off;
+            let mirror_raw_idx = self.trimmed_idxs[slice_idx];
+            Cursor::new_offset( &self.tokens[ mirror_raw_idx .. ], mirror_raw_idx )
+        } else {
+            cursor
+        }
+    }
+
+    pub fn span(&self, idx:usize) -> Span {
+        let idx = idx % self.cut_off;
+        self.spans[idx].clone()
+    }
+
+    pub fn render_error(&self, input:&str, idx:usize, context_lines:usize) -> String {
+        self.render_error_from_span(input, self.span(idx), context_lines)
+    }
+
+    pub fn render_error_from_span( &self, input: &str, span: Span, context_lines: usize) -> String {
+        #[derive(Debug)]
+        struct LineInfo {
+            line_no: usize,      // 1-based
+            line_start: usize,   // byte index
+            line_end: usize,     // byte index (newline 제외)
+        }
+
+        fn find_line(input: &str, pos: usize) -> LineInfo {
+            let mut line_no = 1;
+            let mut last_nl = 0;
+
+            for (i, c) in input.char_indices() {
+                if i >= pos {
+                    break;
+                }
+                if c == '\n' {
+                    line_no += 1;
+                    last_nl = i + 1;
+                }
+            }
+
+            let line_end = input[last_nl..]
+                .find('\n')
+                .map(|i| last_nl + i)
+                .unwrap_or(input.len());
+
+            LineInfo {
+                line_no,
+                line_start: last_nl,
+                line_end,
+            }
+        }
+
+        fn byte_to_column(line: &str, byte_offset: usize) -> usize {
+            line[..byte_offset].chars().count()
+        }
+
+        let line = find_line(input, span.start);
+
+        let mut out = String::new();
+
+        // 이전 라인 출력
+        let mut current_line_start = line.line_start;
+        let mut current_line_no = line.line_no;
+
+        for _ in 0..context_lines {
+            if current_line_start == 0 {
+                break;
+            }
+            let prev = find_line(input, current_line_start - 1);
+            out = format!(
+                "{:>4} | {}\n{}",
+                prev.line_no,
+                &input[prev.line_start..prev.line_end],
+                out
+            );
+            current_line_start = prev.line_start;
+            current_line_no = prev.line_no;
+        }
+
+        // 현재 라인
+        let line_text = &input[line.line_start..line.line_end];
+        out.push_str(&format!(
+            "{:>4} | {}\n",
+            line.line_no,
+            line_text
+        ));
+
+        let col_start =
+            byte_to_column(line_text, span.start - line.line_start);
+        let col_end =
+            byte_to_column(line_text, span.end.min(line.line_end) - line.line_start)
+                .max(col_start + 1);
+
+        // caret 라인
+        out.push_str("     | ");
+        out.push_str(&" ".repeat(col_start));
+        out.push_str(&"^".repeat(col_end - col_start));
+        out.push('\n');
+
+        out
     }
 }
 
-pub fn tokenize_from_str<'a>(input: &'a str) -> (Vec<Token<'a>>, Vec<Span>) {
-    let spanned:Vec<(Token,Span)> = Token::lexer(input)
-        .spanned()
-        .filter_map(| (t,s) | t.map( |v| (v,s) ).ok() )
-        .collect::<Vec<_>>();
 
-    let (tokens, spans):(Vec<Token>, Vec<Span>) = spanned.into_iter().unzip();
-    (tokens, spans)
-}
-
-fn parse<'a>( tks: &'a TokensAndSpan ) -> Result<SKUI<'a>, SKUIParseError> {
-    match parse_tokens( &tks.tokens ) {
+fn parse<'a>(tks: &'a TokenAndSpan) -> Result<SKUI<'a>, SKUIParseError> {
+    match parse_tokens( &tks ) {
         Ok( (styles, components) ) => Ok( SKUI { styles, components } ),
         Err(e) => {
             Err( SKUIParseError {
@@ -509,93 +696,6 @@ fn parse<'a>( tks: &'a TokensAndSpan ) -> Result<SKUI<'a>, SKUIParseError> {
 }
 
 
-pub fn render_error(
-    input: &str,
-    span: Span,
-    context_lines: usize, // 이전 몇 줄 보여줄지
-) -> String {
-    #[derive(Debug)]
-    struct LineInfo {
-        line_no: usize,      // 1-based
-        line_start: usize,   // byte index
-        line_end: usize,     // byte index (newline 제외)
-    }
-
-    fn find_line(input: &str, pos: usize) -> LineInfo {
-        let mut line_no = 1;
-        let mut last_nl = 0;
-
-        for (i, c) in input.char_indices() {
-            if i >= pos {
-                break;
-            }
-            if c == '\n' {
-                line_no += 1;
-                last_nl = i + 1;
-            }
-        }
-
-        let line_end = input[last_nl..]
-            .find('\n')
-            .map(|i| last_nl + i)
-            .unwrap_or(input.len());
-
-        LineInfo {
-            line_no,
-            line_start: last_nl,
-            line_end,
-        }
-    }
-
-    fn byte_to_column(line: &str, byte_offset: usize) -> usize {
-        line[..byte_offset].chars().count()
-    }
-
-    let line = find_line(input, span.start);
-
-    let mut out = String::new();
-
-    // 이전 라인 출력
-    let mut current_line_start = line.line_start;
-    let mut current_line_no = line.line_no;
-
-    for _ in 0..context_lines {
-        if current_line_start == 0 {
-            break;
-        }
-        let prev = find_line(input, current_line_start - 1);
-        out = format!(
-            "{:>4} | {}\n{}",
-            prev.line_no,
-            &input[prev.line_start..prev.line_end],
-            out
-        );
-        current_line_start = prev.line_start;
-        current_line_no = prev.line_no;
-    }
-
-    // 현재 라인
-    let line_text = &input[line.line_start..line.line_end];
-    out.push_str(&format!(
-        "{:>4} | {}\n",
-        line.line_no,
-        line_text
-    ));
-
-    let col_start =
-        byte_to_column(line_text, span.start - line.line_start);
-    let col_end =
-        byte_to_column(line_text, span.end.min(line.line_end) - line.line_start)
-            .max(col_start + 1);
-
-    // caret 라인
-    out.push_str("     | ");
-    out.push_str(&" ".repeat(col_start));
-    out.push_str(&"^".repeat(col_end - col_start));
-    out.push('\n');
-
-    out
-}
 
 #[cfg(test)]
 mod tests {
@@ -633,7 +733,7 @@ mod tests {
             }
         "#;
 
-        let tks = TokensAndSpan::new(input);
+        let tks = TokenAndSpan::new(input);
         match SKUI::parse(&tks) {
             Ok(parsed) => {
                 println!("Parsed successfully!");
@@ -647,7 +747,7 @@ mod tests {
             }
             Err(e) => {
                 println!("Parse error: {:?}", e);
-                panic!("Cause : \n{}", render_error(input, e.span, 2));
+                panic!("Cause : \n{}", tks.render_error_from_span(input, e.span, 2));
             }
         }
     }
@@ -660,62 +760,24 @@ mod tests {
     }
 
     #[test]
-    fn style_block() {
-        fn parse_style_block(cursor:Cursor) -> CursorResult<Vec<Style>> {
-            let mut items = Vec::new();
-            let span = cursor.span();
-            if let (cursor,Token::Ident("style")) = cursor.consume_one() {
-                let span = cursor.span();
-                let SplitCursor{next:cursor,result:mut block} = cursor.consume_delimited_inner( Token::block_brace() ).ok_or_else(|| ParseError::expect_brace_block(span))?;
-                while !block.is_eof() {
-                    let (next, style_item) = parse_style_item(block)?;
-                    block = next;
-                    items.push( style_item );
-                }
-                cursor.ok_with(items)
-            } else {
-                Err(ParseError::expect_ident(span))
-            }
-        }
-        let input = r#"
-style {
-    Flex { background-color: black; padding:1px }
-    #list { border: 1px solid yellow }
-    .myBtn { border: 2px }
-}
-        "#;
-        let (tokens, spans) = tokenize_from_str(input);
-        let cursor = Cursor::new(&tokens);
-
-        if let (_,Token::Ident("style")) = cursor.fork().consume_one() {
-            match parse_style_block( cursor ) {
-                Ok( (cursor,style_block) ) => {
-                    println!("Parsed successfully!");
-                    println!("{:#?}", style_block);
-                }
-                Err(e) => {
-
-                    println!("Parse error: {:?}", e);
-                    let span = &spans[e.span.idx()];
-                    panic!("Cause : {}", &input[span.start .. span.end]);
-                }
-            }
-        }
-    }
-
-    #[test]
     fn style_item() {
         let input = r#".myclass { background-color: black; padding:1px }"#;
-        let (tokens, spans) = tokenize_from_str(input);
-        let cursor = Cursor::new(&tokens);
+        let tks = TokenAndSpan::new(input);
+        let cursor = tks.start_cursor();
 
-        match parse_style_item(cursor) {
+
+        let mut cursor = tks.raw_cursor(cursor);
+        let selector;
+        (cursor, selector) = SelectorParser::parse(cursor).unwrap();
+
+        cursor = tks.trimmed_cursor(cursor);
+        match parse_style_item(selector, cursor) {
             Ok( (cursor,parsed) ) => {
                 println!("Parsed successfully!");
                 println!("{:#?}", parsed);
             }
             Err(e) => {
-                let span = &spans[e.span.idx()];
+                let span = tks.span( e.span.idx() );
                 println!("Parse error: {:?}", e);
                 panic!("Cause : {}", &input[span.start .. span.end]);
             }

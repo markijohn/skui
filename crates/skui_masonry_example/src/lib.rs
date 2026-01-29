@@ -8,7 +8,7 @@ use masonry::layout::Length;
 use masonry::peniko::color::AlphaColor;
 use masonry::properties::{Background, Gap, Padding};
 use masonry::widgets::{Align, Button, Canvas, Checkbox, Flex, FlexParams, Grid, GridParams, Image, IndexedStack, Label, Passthrough, Portal, ProgressBar, Prose, ResizeObserver, SizedBox, Slider, Spinner, Split, TextArea, TextInput, VariableLabel};
-use skui::{Component, Number, Parameters, SKUIParseError, TokensAndSpan, SKUI};
+use skui::{Component, Number, Parameters, SKUIParseError, TokenAndSpan, SKUI};
 use crate::params::{AlignArgs, ArgumentError, ButtonArgs, CheckboxArgs, FlexArgs, FlexItemArgs, FlexSpacerArgs, FromParams, GridArgs, GridParamsArgs, IndexedStackArgs, LabelArgs, ParamsStack, PassthroughArgs, PortalArgs, ProgressBarArgs, ProseArgs, ResizeObserverArgs, SizedBoxArgs, SliderArgs, SplitArgs, TextAreaArgs, TextInputArgs, VariableLabelArgs};
 use std::str::FromStr;
 use masonry::parley::{Brush, StyleProperty};
