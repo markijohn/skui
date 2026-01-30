@@ -33,4 +33,61 @@ impl <'a> Parameters<'a> {
         };
         if key.len() == 1 { find } else { find.and_then(|v| v.get_as_rk(&key[1..])) }
     }
+
+    pub fn consume_flat(&'a self, new:&'a Parameters<'a>) -> Parameters<'a> {
+        match new {
+            Parameters::Map(map) => {
+                let mut new_map = HashMap::new();
+                for (key,value) in map.iter() {
+                    if let Value::Relative(vkey) = value {
+                        if let Some(v) = self.get_as_rk(vkey.as_slice()) {
+                            new_map.insert(key.clone(), v.clone());
+                        } else {
+                            eprintln!("Can't find relative value : {:?}. From : {:?}", vkey, self);
+                        }
+                    } else {
+                        new_map.insert(key.clone(), value.clone());
+                    }
+                }
+                Parameters::Map(new_map)
+            },
+            Parameters::Args(list) => {
+                let mut new_list = Vec::new();
+                for value in list.iter() {
+                    if let Value::Relative(vkey) = value {
+                        if let Some(v) = self.get_as_rk(vkey.as_slice()) {
+                            new_list.push(v.clone());
+                        } else {
+                            eprintln!("Can't find relative value : {:?}. From : {:?}", vkey, self);
+                        }
+                        new.get_as_rk(vkey.as_slice()).map(|v| new_list.push(v.clone()));
+                    } else {
+                        new_list.push(value.clone());
+                    }
+                }
+                Parameters::Args(new_list)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{Parameters, Value, ValueKey};
+
+
+    #[test]
+    fn test() {
+        let map = Value::Map(
+            [("key", Value::String("Hello World!"))].into()
+        );
+        let params = Parameters::Args( vec![map] );
+
+
+        let vkey = ValueKey::vec_from_str("0").unwrap();
+        println!("0 : {:?}", params.get_as_rk(vkey.as_slice()).unwrap());
+
+        let vkey = ValueKey::vec_from_str("0.key").unwrap();
+        println!("0.key : {:?}", params.get_as_rk(vkey.as_slice()).unwrap());
+    }
 }

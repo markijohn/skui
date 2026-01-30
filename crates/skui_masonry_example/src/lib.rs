@@ -1,10 +1,11 @@
 //mod builder;
 pub mod params;
 mod q;
-mod util;
+mod style;
 
 use std::collections::HashMap;
-use masonry::core::{ErasedAction, NewWidget, Properties, Widget, WidgetOptions, WidgetTag};
+use std::marker::PhantomData;
+use masonry::core::{BrushIndex, ErasedAction, NewWidget, Properties, Widget, WidgetOptions, WidgetTag};
 use masonry::layout::Length;
 use masonry::peniko::color::AlphaColor;
 use masonry::properties::{Background, Gap, Padding};
@@ -12,7 +13,7 @@ use masonry::widgets::{Align, Button, Canvas, Checkbox, Flex, FlexParams, Grid, 
 use skui::{Component, CssValue, Number, Parameters, SKUIParseError, TokenAndSpan, SKUI};
 use crate::params::{AlignArgs, ArgumentError, ButtonArgs, CheckboxArgs, FlexArgs, FlexItemArgs, FlexSpacerArgs, FromParams, GridArgs, GridParamsArgs, IndexedStackArgs, LabelArgs, ParamsStack, PassthroughArgs, PortalArgs, ProgressBarArgs, ProseArgs, ResizeObserverArgs, SizedBoxArgs, SliderArgs, SplitArgs, TextAreaArgs, TextInputArgs, VariableLabelArgs};
 use std::str::FromStr;
-use masonry::parley::{Brush, StyleProperty};
+use masonry::parley::{Brush, FontWeight, StyleProperty};
 
 #[derive(Debug,Clone)]
 pub enum Error {
@@ -47,7 +48,7 @@ static WID_TABLE: std::sync::LazyLock<std::sync::RwLock<HashMap<String, &'static
 
 macro_rules! impl_default_widget_builder {
     ( $name:ident { $($comp:ident),* } ) => {
-        impl RootWidgetBuilder for $name {
+        impl <P:CustomPropertyBuilder> RootWidgetBuilder for $name <P> {
             fn build_widget<'a>(params_stack:&ParamsStack<'a>) -> Result<NewWidget<impl Widget + ?Sized>, Error> {
                 match params_stack.component.name {
                     $(
@@ -56,11 +57,33 @@ macro_rules! impl_default_widget_builder {
                     _ => Err( Error::UnknownComponent( format!("{} -> {}", params_stack.fn_name, params_stack.component.name) ) )
                 }
             }
+
+            fn build_custom_properties<'a>(props: &mut Properties, c: &Component<'a>, skui: &SKUI<'a>) {
+                P::build_properties(props, c, skui);
+            }
         }
     }
 }
 
-pub struct DefaultWidgetBuilder;
+pub trait CustomPropertyBuilder {
+    fn build_properties<'a>(props:&mut Properties, c:&Component<'a>, skui:&SKUI<'a>);
+}
+
+pub struct EmptyPropertyBuilder;
+impl CustomPropertyBuilder for EmptyPropertyBuilder {
+    fn build_properties<'a>(props: &mut Properties, c: &Component<'a>, skui: &SKUI<'a>) {
+        //None
+    }
+}
+
+
+pub struct DefaultWidgetBuilder<P> {
+    p : PhantomData<P>
+}
+
+pub type BasicWidgetBuilder = DefaultWidgetBuilder<EmptyPropertyBuilder>;
+
+
 impl_default_widget_builder!(DefaultWidgetBuilder {Align,Button,Canvas,Checkbox,Flex,Grid,Image,
             IndexedStack,Label,Passthrough,Portal,ProgressBar,Prose,ResizeObserver,
             SizedBox,Slider,Spinner,Split,TextAreaEditable,TextInput,VariableLabel});
@@ -83,45 +106,53 @@ pub trait RootWidgetBuilder {
 
     fn build_widget<'a>(params_stack:&ParamsStack<'a>) -> Result<NewWidget<impl Widget + ?Sized>, Error>;
 
-    fn build_properties<'a>(c:&Component<'a>, skui:&SKUI<'a>) -> Properties {
+    fn build_styles<'a>(build_prop:bool, build_styles:bool, c:&Component<'a>, skui:&SKUI<'a>) -> (Properties,Vec<StyleProperty<'static,BrushIndex>>) {
         let mut props = Properties::new();
         let mut styles = vec![];
         let mut parents = vec![];
-        skui.get_main_component().unwrap().component.find( &mut parents, c );
+        let Some(main) = skui.get_main_component() else { return (props, styles) };
+        main.component.find( &mut parents, c );
         skui.get_styles(parents.as_slice(), c)
             .for_each( |style| {
-
+                style::style_parse(build_prop, build_styles, style, &mut props, &mut styles);
             });
-
-
-        if let Some(v) = c.properties.get("padding").and_then(|v| v.as_f64()) {  }
-        if let Some(v) = c.properties.get("gap").and_then(|v| v.as_i64()) {  }
-        if let Some(v) = c.properties.get("background_color").and_then(|v| v.as_str()) {
-            if let Ok(col) = AlphaColor::from_str(v) { props = props.with( Background::Color(col) ) }
-        }
-        props
+        Self::build_custom_properties(&mut props, c, skui);
+        (props, styles)
     }
 
-    fn build_text_style<'a,'b,B:Brush>(c:&Component<'a>) -> Option<StyleProperty<'b,B>>  {
-        if let Some(v) = c.properties.get("font_size").and_then(|v| v.as_f64()) {
-            Some( StyleProperty::FontSize(v as _) )
-        } else { None }
-    }
+    fn build_custom_properties<'a>(props: &mut Properties, c: &Component<'a>, skui: &SKUI<'a>);
 }
+
+type MasonryStyle = StyleProperty<'static,BrushIndex>;
+type MasonryStyles = Vec<StyleProperty<'static,BrushIndex>>;
 
 pub trait WidgetBuilder {
     const WIDGET_NAME: &'static str;
+    const BUILD_PROPERTIES:bool = true;
+    const BUILD_STYLES:bool = false;
     type TargetWidget: Widget;
 
     fn build<'a,B:RootWidgetBuilder>(params_stack:&ParamsStack<'a>)  -> Result<NewWidget<impl Widget + ?Sized>, Error> {
-        let widget = <Self as WidgetBuilder>::build_target::<B>(params_stack)?;
+        let (props, styles) = B::build_styles(Self::BUILD_PROPERTIES, Self::BUILD_STYLES, &params_stack.component, &params_stack.skui) ;
+        let mut widget = <Self as WidgetBuilder>::build_target::<B>(params_stack)?;
+        if Self::BUILD_STYLES {
+            for s in styles.into_iter() {
+                widget = Self::apply_style::<B>( widget, s);
+            }
+        }
         let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
         let wopts = WidgetOptions::default();
-        let props = B::build_properties(&params_stack.component, &params_stack.skui);
+
+        //let props = B::build_properties(&params_stack.component, &params_stack.skui);
+
         Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
     }
 
     fn build_target<'a,B:RootWidgetBuilder>(params_stack:&ParamsStack<'a>) -> Result<Self::TargetWidget, Error>;
+
+    fn apply_style<'a,B:RootWidgetBuilder>(target:Self::TargetWidget, style:MasonryStyle) -> Self::TargetWidget {
+        target
+    }
 }
 
 impl WidgetBuilder for Align {
@@ -139,10 +170,11 @@ impl WidgetBuilder for Align {
 impl WidgetBuilder for Button {
     const WIDGET_NAME: &'static str = "Button";
     type TargetWidget = Self;
+    const BUILD_STYLES:bool = true;
 
     fn build_target<'a, B: RootWidgetBuilder>(params_stack: &ParamsStack<'a>) -> Result<Self::TargetWidget, Error> {
-        let button_args = ButtonArgs::from_params(params_stack)?;
-        let widget = Button::new( NewWidget::new(Label::new(button_args.text)) );
+        //let button_args = ButtonArgs::from_params(params_stack)?;
+        let widget = Button::new( Label::build::<B>(params_stack)? );
         Ok( widget )
     }
 }
@@ -173,6 +205,7 @@ impl WidgetBuilder for Flex {
     type TargetWidget = Self;
 
     fn build_target<'a, B: RootWidgetBuilder>(params_stack: &ParamsStack<'a>) -> Result<Self::TargetWidget, Error> {
+        println!("\n{:#?}", params_stack);
         let flex_args = FlexArgs::from_params(params_stack)?;
         let mut widget = Flex::for_axis(flex_args.axis);
         if let Some(main_axis_align) = flex_args.main_axis_alignment { widget = widget.main_axis_alignment(main_axis_align);}
@@ -195,7 +228,7 @@ impl WidgetBuilder for Flex {
                     }
                 }
                 _ => {
-                    let child = B::build_widget(&flex_child_stack.new_stack(c))?;
+                    let child = B::build_widget(&flex_child_stack)?;
                     widget = widget.with_fixed( child );
                 }
             }
@@ -212,7 +245,7 @@ impl WidgetBuilder for Grid {
         let grid_args = GridArgs::from_params(params_stack)?;
         let mut widget = Grid::with_dimensions( grid_args.x, grid_args.y );
 
-        for mut c in params_stack.children() {
+        for c in params_stack.children() {
             let grid_child_stack = params_stack.new_stack(c);
             match grid_child_stack.component.name {
                 "GridItem" => {
@@ -265,14 +298,15 @@ impl WidgetBuilder for IndexedStack {
 impl WidgetBuilder for Label {
     const WIDGET_NAME: &'static str = "Label";
     type TargetWidget = Self;
+    const BUILD_STYLES:bool = true;
     fn build_target<'a, B: RootWidgetBuilder>(params_stack: &ParamsStack<'a>) -> Result<Self::TargetWidget, Error> {
         let label_args = LabelArgs::from_params(params_stack)?;
-        let mut widget = Label::new(label_args.text);
-        if let Some(v) = B::build_text_style( &params_stack.component ) {
-            widget = widget.with_style( v );
-        }
-
+        let widget = Label::new(label_args.text);
         Ok( widget )
+    }
+
+    fn apply_style<'a, B: RootWidgetBuilder>(target: Self::TargetWidget, style: MasonryStyle) -> Self::TargetWidget {
+        target.with_style(style)
     }
 }
 
@@ -296,7 +330,7 @@ impl WidgetBuilder for Portal<Label> {
         let widget = Portal::new( B::build_widget( &params_stack.new_stack(portal_args.comp) )?.erased() );
         let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
         let wopts = WidgetOptions::default();
-        let props = B::build_properties(&params_stack.component);
+        let props = Properties::new();
         Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
     }
 
@@ -394,7 +428,7 @@ impl WidgetBuilder for Split<dyn Widget<Action=ErasedAction>,dyn Widget<Action=E
         );
         let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
         let wopts = WidgetOptions::default();
-        let props = B::build_properties(&params_stack.component);
+        let (props, _styles) = B::build_styles(true,false,&params_stack.component,&params_stack.skui);
         Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
     }
 
@@ -410,17 +444,22 @@ impl <const USER_EDITABLE:bool> WidgetBuilder for TextArea<USER_EDITABLE> {
 
     fn build<'a, B: RootWidgetBuilder>(params_stack: &ParamsStack<'a>) -> Result<NewWidget<impl Widget + ?Sized>, Error> {
         let args = TextAreaArgs::from_params(params_stack)?;
+        let (props,styles) = B::build_styles(true,true,&params_stack.component, &params_stack.skui);
         if args.editable.unwrap_or(true) {
-            let widget = TextArea::<true>::new(args.text.unwrap_or(""));
+            let mut widget = TextArea::<true>::new(args.text.unwrap_or(""));
             let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
             let wopts = WidgetOptions::default();
-            let props = B::build_properties(&params_stack.component);
+            for s in styles.into_iter() {
+                widget = widget.with_style(s);
+            }
             Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
         } else {
-            let widget = TextArea::<false>::new(args.text.unwrap_or(""));
+            let mut widget = TextArea::<false>::new(args.text.unwrap_or(""));
             let wid = params_stack.get_id().map( |id| { unsafe { B::get_widget_tag(id) } } );
             let wopts = WidgetOptions::default();
-            let props = B::build_properties(&params_stack.component);
+            for s in styles.into_iter() {
+                widget = widget.with_style(s);
+            }
             Ok( NewWidget::new_with(widget, wid, wopts, props).erased() )
         }
     }
@@ -450,7 +489,8 @@ impl WidgetBuilder for VariableLabel {
 
     fn build_target<'a, B: RootWidgetBuilder>(params_stack: &ParamsStack<'a>) -> Result<Self::TargetWidget, Error> {
         let args = VariableLabelArgs::from_params(params_stack)?;
-        let widget = VariableLabel::new(args.text);
+        let mut widget = VariableLabel::new(args.text);
+        widget = widget.with_initial_weight( args.weight.unwrap_or(FontWeight::NORMAL.value()) );
         Ok( widget )
     }
 }

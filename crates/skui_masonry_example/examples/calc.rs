@@ -31,7 +31,7 @@ use masonry::widgets::{Button, ButtonPress, Flex, Grid, GridParams, Label};
 use masonry_winit::app::{AppDriver, DriverCtx, NewWindow, WindowId};
 use masonry_winit::winit::window::Window;
 use skui::{Component, Parameters, TokenAndSpan, Value, SKUI};
-use skui_masonry_example::{Error as SKUIMasonryError, Error, DefaultWidgetBuilder, RootWidgetBuilder};
+use skui_masonry_example::{Error as SKUIMasonryError, Error, DefaultWidgetBuilder, RootWidgetBuilder, CustomPropertyBuilder};
 use skui_masonry_example::params::ParamsStack;
 
 #[derive(Clone)]
@@ -190,53 +190,53 @@ impl AppDriver for CalcState {
 
 // ---
 
-// fn op_button_with_label(op: char, label: String) -> NewWidget<Button> {
-//     const BLUE: Color = Color::from_rgb8(0x00, 0x8d, 0xdd);
-//     const LIGHT_BLUE: Color = Color::from_rgb8(0x5c, 0xc4, 0xff);
-//
-//     let button = Button::new(
-//         Label::new(label)
-//             .with_style(StyleProperty::FontSize(24.))
-//             .with_auto_id(),
-//     );
-//
-//     NewWidget::new_with_props(
-//         button,
-//         Properties::new()
-//             .with(Background::Color(BLUE))
-//             .with(ActiveBackground(Background::Color(LIGHT_BLUE)))
-//             .with(HoveredBorderColor(BorderColor::new(Color::WHITE)))
-//             .with(BorderColor::new(Color::TRANSPARENT))
-//             .with(BorderWidth::all(2.0))
-//             .with(CalcAction::Op(op)),
-//     )
-// }
-//
-// fn op_button(op: char) -> NewWidget<Button> {
-//     op_button_with_label(op, op.to_string())
-// }
-//
-// fn digit_button(digit: u8) -> NewWidget<Button> {
-//     const GRAY: Color = Color::from_rgb8(0x3a, 0x3a, 0x3a);
-//     const LIGHT_GRAY: Color = Color::from_rgb8(0x71, 0x71, 0x71);
-//
-//     let button = Button::new(
-//         Label::new(format!("{digit}"))
-//             .with_style(StyleProperty::FontSize(24.))
-//             .with_auto_id(),
-//     );
-//
-//     NewWidget::new_with_props(
-//         button,
-//         Properties::new()
-//             .with(Background::Color(GRAY))
-//             .with(ActiveBackground(Background::Color(LIGHT_GRAY)))
-//             .with(HoveredBorderColor(BorderColor::new(Color::WHITE)))
-//             .with(BorderColor::new(Color::TRANSPARENT))
-//             .with(BorderWidth::all(2.0))
-//             .with(CalcAction::Digit(digit)),
-//     )
-// }
+fn op_button_with_label(op: char, label: String) -> NewWidget<Button> {
+    const BLUE: Color = Color::from_rgb8(0x00, 0x8d, 0xdd);
+    const LIGHT_BLUE: Color = Color::from_rgb8(0x5c, 0xc4, 0xff);
+
+    let button = Button::new(
+        Label::new(label)
+            .with_style(StyleProperty::FontSize(24.))
+            .with_auto_id(),
+    );
+
+    NewWidget::new_with_props(
+        button,
+        Properties::new()
+            .with(Background::Color(BLUE))
+            .with(ActiveBackground(Background::Color(LIGHT_BLUE)))
+            .with(HoveredBorderColor(BorderColor::new(Color::WHITE)))
+            .with(BorderColor::new(Color::TRANSPARENT))
+            .with(BorderWidth::all(2.0))
+            .with(CalcAction::Op(op)),
+    )
+}
+
+fn op_button(op: char) -> NewWidget<Button> {
+    op_button_with_label(op, op.to_string())
+}
+
+fn digit_button(digit: u8) -> NewWidget<Button> {
+    const GRAY: Color = Color::from_rgb8(0x3a, 0x3a, 0x3a);
+    const LIGHT_GRAY: Color = Color::from_rgb8(0x71, 0x71, 0x71);
+
+    let button = Button::new(
+        Label::new(format!("{digit}"))
+            .with_style(StyleProperty::FontSize(24.))
+            .with_auto_id(),
+    );
+
+    NewWidget::new_with_props(
+        button,
+        Properties::new()
+            .with(Background::Color(GRAY))
+            .with(ActiveBackground(Background::Color(LIGHT_GRAY)))
+            .with(HoveredBorderColor(BorderColor::new(Color::WHITE)))
+            .with(BorderColor::new(Color::TRANSPARENT))
+            .with(BorderWidth::all(2.0))
+            .with(CalcAction::Digit(digit)),
+    )
+}
 
 /// Build the widget tree
 // pub fn build_calc() -> NewWidget<impl Widget> {
@@ -288,31 +288,30 @@ impl AppDriver for CalcState {
 
 fn build_calc() -> NewWidget<impl Widget + ?Sized> {
     let src = r#"
-#op_button { border-color:transparent; background-color:blue; border-width:2 }
-#op_button:active { border-color:lightblue; }
-#op_button:hover { border-color: white }
-
-#digit_button { border-color:transparent; background-color:#3a3a3a; border-width:2}
-#digit_button:active { background-color:#717171; }
-#digit_button:hover { border-color: white }
-
+.display { font-size : 30 }
+.op_button { border-color:transparent; background-color:#008ddd; border-width:2; font-size:24; }
+.op_button:active { border-color:#5cc4ff; }
+.op_button:hover { border-color: white }
+.digit_button { border-color:transparent; background-color:#3a3a3a; border-width:2; font-size:24;}
+.digit_button:active { background-color:#717171; }
+.digit_button:hover { border-color: white }
 Grid { background-color: #794869, padding: 2, gap:1 }
 
 Display:
     Flex(axis=Vertical, cross_axis_alignment=End) {
         FlexSpace(1.)
-        Label("11111") #display { font_size : 30 }
+        Label("") .display
         FlexSpace(1.)
     }
 
 Op:
     GridItem(
-        Button( ${0} ) { cacl_action: ${0} },
+        Button( ${0} ) .op_button { cacl_action: ${0} },
         ${1},${2}, 1,1 )
 
 Digit:
     GridItem(
-        Button( ${0} ) { calc_action: ${0} } ,
+        Button( ${0} ) .digit_button { calc_action: ${0} } ,
         ${1},${2}, 1,1 )
 
 Main :
@@ -356,7 +355,7 @@ fn build_widget(src:&str) -> NewWidget<impl Widget + ?Sized> {
             let parameters = Parameters::empty();
             let Some(params_stack) = ParamsStack::new_main(&parameters, &skui)
             else { return NewWidget::new( Label::new( "Can't find Main component." ) ).erased() };
-            match CustomWidgetBuilder::build_widget( &params_stack ) {
+            match DefaultWidgetBuilder::<MyCaclProperty>::build_widget( &params_stack ) {
                 Ok(widget) => widget.erased(),
                 Err(e) => NewWidget::new( Label::new( format!("{e:#?}") ) ).erased()
             }
@@ -368,25 +367,22 @@ fn build_widget(src:&str) -> NewWidget<impl Widget + ?Sized> {
     }
 }
 
-struct CustomWidgetBuilder;
-impl RootWidgetBuilder for CustomWidgetBuilder {
-    fn build_widget<'a>(params_stack: &ParamsStack<'a>) -> Result<NewWidget<impl Widget + ?Sized>, SKUIMasonryError> {
-        DefaultWidgetBuilder::build_widget(params_stack)
-    }
+struct MyCaclProperty;
+impl CustomPropertyBuilder for MyCaclProperty {
 
-    fn build_properties<'a>(c: &Component<'a>) -> Properties {
-        let mut props = DefaultWidgetBuilder::build_properties(c);
-        let comp_props = &c.properties;
-        if let Some( Value::String(btn) ) = comp_props.get("calc_action") {
+    fn build_properties<'a>(props: &mut Properties, c: &Component<'a>, skui: &SKUI<'a>) {
+        println!("button???: {:?}", c.properties.get("calc_action"));
+        if let Some( Value::String(btn) ) = c.properties.get("calc_action") {
+            println!("button: {}", btn);
             if let Some(c) = btn.chars().nth(0) {
                 if let Some(d) = c.to_digit(10) {
-                    props.insert( CalcAction::Digit(d as _) );
+                    println!("digit: {}", d);
+                    props.insert( CalcAction::Digit(d as u8) );
                 } else {
                     props.insert( CalcAction::Op(c) );
                 }
             }
         }
-        props
     }
 }
 

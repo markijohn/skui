@@ -1,5 +1,4 @@
 use logos::Logos;
-use crate::ValueKey;
 
 fn parse_rgb(s: &str) -> Option<(u8, u8, u8)> {
     let inner = s.trim_start_matches("rgb(").trim_end_matches(')');

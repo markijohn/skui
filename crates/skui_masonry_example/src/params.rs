@@ -300,4 +300,4 @@ impl_from_params!(SliderArgs, MUST[min:f64,max:f64,value:f64], OPTION[step:f64] 
 impl_from_params!(SplitArgs<'a>, OPTION[first:&'a Component<'a>,second:&'a Component<'a>] );
 impl_from_params!(TextAreaArgs<'a>, OPTION[text:&'a str,alignment:TextAlign,insert_newline:InsertNewline,hint:bool,editable:bool]);
 impl_from_params!(TextInputArgs<'a>, OPTION[placeholder:&'a str, text:&'a str,clip:bool,alignment:TextAlign] );
-impl_from_params!(VariableLabelArgs<'a>, MUST[text:&'a str]);
+impl_from_params!(VariableLabelArgs<'a>, MUST[text:&'a str], OPTION[weight:f32]);
